@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AppConfig {
-    pub task_bin: Option<PathBuf>,
+    pub sqlite_path: Option<PathBuf>,
     #[serde(default)]
     pub server: ServerConfig,
 }
@@ -50,6 +50,18 @@ impl AppConfig {
             .with_context(|| format!("failed to parse config file at {}", path.display()))?;
         Ok(config)
     }
+
+    pub fn resolve_sqlite_path(&self) -> Result<PathBuf> {
+        if let Some(path) = sqlite_path_env()? {
+            return Ok(path);
+        }
+
+        if let Some(path) = self.sqlite_path.clone() {
+            return Ok(path);
+        }
+
+        default_sqlite_path()
+    }
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -70,8 +82,11 @@ fn config_dir() -> Option<PathBuf> {
         .map(|home| home.join(".config").join("taskforce"))
 }
 
-pub fn task_bin_env() -> Option<PathBuf> {
-    std::env::var_os("TASKFORCE_TASK_BIN").map(PathBuf::from)
+pub fn sqlite_path_env() -> Result<Option<PathBuf>> {
+    match std::env::var_os("TASKFORCE_SQLITE_PATH") {
+        Some(path) => Ok(Some(PathBuf::from(path))),
+        None => Ok(None),
+    }
 }
 
 pub fn server_host_env() -> Option<Result<IpAddr>> {
@@ -91,6 +106,22 @@ pub fn server_port_env() -> Result<Option<u16>> {
     }
 }
 
+pub fn data_dir() -> Result<PathBuf> {
+    if let Some(xdg_home) = std::env::var_os("XDG_DATA_HOME") {
+        return Ok(PathBuf::from(xdg_home).join("taskforce"));
+    }
+
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("HOME is not set"))?;
+    Ok(PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("taskforce"))
+}
+
+fn default_sqlite_path() -> Result<PathBuf> {
+    Ok(data_dir()?.join("taskforce.db"))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -104,13 +135,13 @@ mod tests {
     use super::{AppConfig, ServerConfig};
 
     #[test]
-    fn loads_task_bin_from_toml() -> Result<()> {
-        let path = unique_temp_path("taskforce-config");
-        fs::write(&path, "task_bin = \"/tmp/taskforce-task\"\n")?;
+    fn loads_sqlite_path_from_toml() -> Result<()> {
+        let path = unique_temp_path("taskforce-backend-config");
+        fs::write(&path, "sqlite_path = \"/tmp/taskforce.db\"\n")?;
 
         let config = AppConfig::load_from_path(&path)?;
 
-        assert_eq!(config.task_bin, Some(PathBuf::from("/tmp/taskforce-task")));
+        assert_eq!(config.sqlite_path, Some(PathBuf::from("/tmp/taskforce.db")));
         fs::remove_file(path)?;
         Ok(())
     }
