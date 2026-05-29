@@ -87,9 +87,13 @@ fn push_locale_candidates(candidates: &mut Vec<String>, value: &str) {
         normalized,
         without_encoding,
         without_modifier,
-        without_modifier.split_once('_').map(|(language, _)| language).unwrap_or(without_modifier),
+        without_modifier
+            .split_once('_')
+            .map(|(language, _)| language)
+            .unwrap_or(without_modifier),
     ] {
-        if is_meaningful_locale(candidate) && !candidates.iter().any(|existing| existing == candidate)
+        if is_meaningful_locale(candidate)
+            && !candidates.iter().any(|existing| existing == candidate)
         {
             candidates.push(candidate.to_string());
         }
