@@ -22,6 +22,7 @@ pub struct ChatworkMessage {
 pub struct TaskDraft {
     pub input: NewTaskInput,
     pub extra: PluginExtra,
+    #[allow(dead_code)]
     pub annotations: Vec<Annotation>,
 }
 

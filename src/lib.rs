@@ -1,9 +1,10 @@
 pub mod app;
 pub mod backend;
-pub mod chatwork_plugin;
 pub mod cli;
 pub mod config;
-pub mod intake;
 pub mod local_backend;
 pub mod plugin;
 pub mod web;
+
+#[path = "../examples/plugins/chatwork/mod.rs"]
+pub mod chatwork_plugin;
