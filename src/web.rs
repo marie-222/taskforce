@@ -381,6 +381,6 @@ mod tests {
             .expect("body");
         let text = String::from_utf8(body.to_vec()).expect("utf8");
         assert!(text.contains("taskforce"));
-        assert!(text.contains("Pending Tasks"));
+        assert!(text.contains("Open Tasks"));
     }
 }

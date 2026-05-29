@@ -29,11 +29,16 @@ impl LocalBackend {
         let connection = self.connection()?;
         connection.execute_batch(
             r#"
+            CREATE TABLE IF NOT EXISTS task_statuses (
+              id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL UNIQUE
+            );
+
             CREATE TABLE IF NOT EXISTS tasks (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               uuid TEXT NOT NULL UNIQUE,
               title TEXT NOT NULL,
-              status TEXT NOT NULL,
+              status_id INTEGER NOT NULL,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL,
               target_date TEXT,
@@ -44,7 +49,8 @@ impl LocalBackend {
               launch_time_hint TEXT,
               project TEXT,
               tags_json TEXT NOT NULL,
-              extra_json TEXT NOT NULL
+              extra_json TEXT NOT NULL,
+              FOREIGN KEY(status_id) REFERENCES task_statuses(id)
             );
 
             CREATE TABLE IF NOT EXISTS task_annotations (
@@ -57,6 +63,8 @@ impl LocalBackend {
             );
             "#,
         )?;
+        seed_task_statuses(&connection)?;
+        migrate_legacy_status_column(&connection)?;
         Ok(())
     }
 
@@ -70,23 +78,24 @@ impl LocalBackend {
         let mut statement = connection.prepare(
             r#"
             SELECT
-              id,
-              uuid,
-              title,
-              status,
-              created_at,
-              updated_at,
-              target_date,
-              deadline,
-              launch_date,
-              target_time_hint,
-              deadline_time_hint,
-              launch_time_hint,
-              project,
-              tags_json,
-              extra_json
+              tasks.id,
+              tasks.uuid,
+              tasks.title,
+              task_statuses.name,
+              tasks.created_at,
+              tasks.updated_at,
+              tasks.target_date,
+              tasks.deadline,
+              tasks.launch_date,
+              tasks.target_time_hint,
+              tasks.deadline_time_hint,
+              tasks.launch_time_hint,
+              tasks.project,
+              tasks.tags_json,
+              tasks.extra_json
             FROM tasks
-            WHERE id = ?1
+            JOIN task_statuses ON task_statuses.id = tasks.status_id
+            WHERE tasks.id = ?1
             "#,
         )?;
 
@@ -103,25 +112,26 @@ impl TaskBackend for LocalBackend {
         let mut statement = connection.prepare(
             r#"
             SELECT
-              id,
-              uuid,
-              title,
-              status,
-              created_at,
-              updated_at,
-              target_date,
-              deadline,
-              launch_date,
-              target_time_hint,
-              deadline_time_hint,
-              launch_time_hint,
-              project,
-              tags_json,
-              extra_json
+              tasks.id,
+              tasks.uuid,
+              tasks.title,
+              task_statuses.name,
+              tasks.created_at,
+              tasks.updated_at,
+              tasks.target_date,
+              tasks.deadline,
+              tasks.launch_date,
+              tasks.target_time_hint,
+              tasks.deadline_time_hint,
+              tasks.launch_time_hint,
+              tasks.project,
+              tasks.tags_json,
+              tasks.extra_json
             FROM tasks
-            WHERE status IN ('unstarted', 'active', 'pending')
+            JOIN task_statuses ON task_statuses.id = tasks.status_id
+            WHERE task_statuses.name IN ('unstarted', 'active', 'pending')
             ORDER BY
-              CASE status
+              CASE task_statuses.name
                 WHEN 'active' THEN 0
                 WHEN 'unstarted' THEN 1
                 WHEN 'pending' THEN 2
@@ -159,7 +169,7 @@ impl TaskBackend for LocalBackend {
             INSERT INTO tasks (
               uuid,
               title,
-              status,
+              status_id,
               created_at,
               updated_at,
               target_date,
@@ -176,7 +186,7 @@ impl TaskBackend for LocalBackend {
             params![
                 task.uuid,
                 task.core.title,
-                task_status_text(task.core.status),
+                task_status_id(task.core.status),
                 task.core.created_at.to_rfc3339(),
                 task.core.updated_at.to_rfc3339(),
                 task.core.target_date.map(|value| value.to_string()),
@@ -257,19 +267,21 @@ impl TaskBackend for LocalBackend {
             r#"
             UPDATE tasks
             SET title = ?1,
-                updated_at = ?2,
-                target_date = ?3,
-                deadline = ?4,
-                launch_date = ?5,
-                target_time_hint = ?6,
-                deadline_time_hint = ?7,
-                launch_time_hint = ?8,
-                project = ?9,
-                tags_json = ?10
-            WHERE id = ?11
+                status_id = ?2,
+                updated_at = ?3,
+                target_date = ?4,
+                deadline = ?5,
+                launch_date = ?6,
+                target_time_hint = ?7,
+                deadline_time_hint = ?8,
+                launch_time_hint = ?9,
+                project = ?10,
+                tags_json = ?11
+            WHERE id = ?12
             "#,
             params![
                 task.core.title,
+                task_status_id(task.core.status),
                 now,
                 task.core.target_date.map(|value| value.to_string()),
                 task.core.deadline.map(|value| value.to_string()),
@@ -357,8 +369,8 @@ impl TaskBackend for LocalBackend {
 fn update_task_status(backend: &LocalBackend, id: u64, status: TaskStatus) -> Result<Task> {
     let connection = backend.connection()?;
     let updated = connection.execute(
-        "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
-        params![task_status_text(status), Utc::now().to_rfc3339(), id],
+        "UPDATE tasks SET status_id = ?1, updated_at = ?2 WHERE id = ?3",
+        params![task_status_id(status), Utc::now().to_rfc3339(), id],
     )?;
 
     if updated == 0 {
@@ -414,15 +426,15 @@ fn json_decode_error(error: impl std::error::Error + Send + Sync + 'static) -> r
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
 }
 
-fn task_status_text(status: TaskStatus) -> &'static str {
+fn task_status_id(status: TaskStatus) -> i64 {
     match status {
-        TaskStatus::Unstarted => "unstarted",
-        TaskStatus::Active => "active",
-        TaskStatus::Pending => "pending",
-        TaskStatus::Done => "done",
-        TaskStatus::Abandoned => "abandoned",
-        TaskStatus::Mistaken => "mistaken",
-        TaskStatus::Duplicated => "duplicated",
+        TaskStatus::Unstarted => 1,
+        TaskStatus::Active => 2,
+        TaskStatus::Pending => 3,
+        TaskStatus::Done => 4,
+        TaskStatus::Abandoned => 5,
+        TaskStatus::Mistaken => 6,
+        TaskStatus::Duplicated => 7,
     }
 }
 
@@ -437,6 +449,65 @@ fn parse_task_status(value: &str) -> TaskStatus {
         "duplicated" => TaskStatus::Duplicated,
         _ => TaskStatus::Unstarted,
     }
+}
+
+fn seed_task_statuses(connection: &Connection) -> Result<()> {
+    let statuses = [
+        (1_i64, "unstarted"),
+        (2_i64, "active"),
+        (3_i64, "pending"),
+        (4_i64, "done"),
+        (5_i64, "abandoned"),
+        (6_i64, "mistaken"),
+        (7_i64, "duplicated"),
+    ];
+
+    for (id, name) in statuses {
+        connection.execute(
+            "INSERT OR IGNORE INTO task_statuses (id, name) VALUES (?1, ?2)",
+            params![id, name],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn migrate_legacy_status_column(connection: &Connection) -> Result<()> {
+    let columns = connection
+        .prepare("PRAGMA table_info(tasks)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let has_status_column = columns.iter().any(|column| column == "status");
+    let has_status_id_column = columns.iter().any(|column| column == "status_id");
+
+    if !has_status_id_column {
+        connection.execute("ALTER TABLE tasks ADD COLUMN status_id INTEGER", [])?;
+    }
+
+    if !has_status_column {
+        connection.execute(
+            "UPDATE tasks SET status_id = COALESCE(status_id, 1) WHERE status_id IS NULL",
+            [],
+        )?;
+        return Ok(());
+    }
+
+    connection.execute(
+        "UPDATE tasks
+         SET status_id = CASE status
+            WHEN 'active' THEN 2
+            WHEN 'pending' THEN 3
+            WHEN 'done' THEN 4
+            WHEN 'abandoned' THEN 5
+            WHEN 'mistaken' THEN 6
+            WHEN 'duplicated' THEN 7
+            ELSE 1
+         END
+         WHERE status_id IS NULL OR status_id = 0",
+        [],
+    )?;
+
+    Ok(())
 }
 
 fn generate_local_uuid() -> String {
@@ -515,7 +586,10 @@ mod tests {
             ..Default::default()
         })?;
         let duplicated = backend.mark_duplicated(third.id.expect("id"))?;
-        assert_eq!(duplicated.core.status, crate::backend::TaskStatus::Duplicated);
+        assert_eq!(
+            duplicated.core.status,
+            crate::backend::TaskStatus::Duplicated
+        );
 
         let fourth = backend.add(NewTaskInput {
             title: "Abandoned task".into(),
