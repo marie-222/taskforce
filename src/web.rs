@@ -197,16 +197,16 @@ const INDEX_HTML: &str = r#"<!DOCTYPE html>
         <div class="eyebrow">Local Task Console</div>
         <h1>taskforce</h1>
         <p class="lede">
-          Pending tasks from your local taskforce database, served over a tiny local HTTP view.
+          Open tasks from your local taskforce database, served over a tiny local HTTP view.
         </p>
       </section>
       <section class="panel">
         <div class="panel-head">
-          <h2>Pending Tasks</h2>
+          <h2>Open Tasks</h2>
           <button id="refresh" type="button">Refresh</button>
         </div>
         <ul id="task-list"></ul>
-        <div id="empty" class="empty" hidden>No pending tasks.</div>
+        <div id="empty" class="empty" hidden>No open tasks.</div>
       </section>
     </main>
     <script>
@@ -293,11 +293,19 @@ mod tests {
             unreachable!("not used in web tests")
         }
 
-        fn delete(&self, _id: u64) -> anyhow::Result<Task> {
+        fn mark_done(&self, _id: u64) -> anyhow::Result<Task> {
             unreachable!("not used in web tests")
         }
 
-        fn mark_done(&self, _id: u64) -> anyhow::Result<Task> {
+        fn mark_abandoned(&self, _id: u64) -> anyhow::Result<Task> {
+            unreachable!("not used in web tests")
+        }
+
+        fn mark_mistaken(&self, _id: u64) -> anyhow::Result<Task> {
+            unreachable!("not used in web tests")
+        }
+
+        fn mark_duplicated(&self, _id: u64) -> anyhow::Result<Task> {
             unreachable!("not used in web tests")
         }
 
@@ -314,7 +322,7 @@ mod tests {
                 uuid: "abc".into(),
                 core: CoreTaskFields {
                     title: "Ship MVP".into(),
-                    status: TaskStatus::Pending,
+                    status: TaskStatus::Unstarted,
                     created_at: Utc::now(),
                     updated_at: Utc::now(),
                     target_date: None,

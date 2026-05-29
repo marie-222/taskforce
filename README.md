@@ -62,8 +62,10 @@ cargo run -- edit 1 --clear-deadline --clear-project
 cargo run -- set 1 requester ishii
 cargo run -- get 1 requester
 cargo run -- unset 1 requester
-cargo run -- delete 1
 cargo run -- done 1
+cargo run -- abandon 1
+cargo run -- mistake 1
+cargo run -- duplicate 1
 TASKFORCE_SQLITE_PATH="$HOME/.local/share/taskforce/taskforce.db" cargo run -- serve
 ```
 

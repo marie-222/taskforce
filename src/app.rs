@@ -102,17 +102,25 @@ pub async fn run(cli: Cli) -> Result<()> {
             let task = client.unset_extra(id, &key)?;
             println!("updated {}: {}", task.id_text(), task.title());
         }
-        Commands::Delete { id } => {
-            let task = client.delete(id)?;
-            println!("deleted {}: {}", task.id_text(), task.title());
-        }
         Commands::Done { id } => {
             let task = client.mark_done(id)?;
             println!("done {}: {}", task.id_text(), task.title());
         }
+        Commands::Abandon { id } => {
+            let task = client.mark_abandoned(id)?;
+            println!("abandoned {}: {}", task.id_text(), task.title());
+        }
+        Commands::Mistake { id } => {
+            let task = client.mark_mistaken(id)?;
+            println!("mistaken {}: {}", task.id_text(), task.title());
+        }
+        Commands::Duplicate { id } => {
+            let task = client.mark_duplicated(id)?;
+            println!("duplicated {}: {}", task.id_text(), task.title());
+        }
         Commands::Next => match client.next_task()? {
             Some(task) => println!("next {}: {}", task.id_text(), task.title()),
-            None => println!("no pending tasks"),
+            None => println!("no open tasks"),
         },
         Commands::Serve => {
             crate::web::serve(client, config.server.resolve()?).await?;
@@ -124,7 +132,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 
 fn print_tasks(tasks: &[Task]) {
     if tasks.is_empty() {
-        println!("no pending tasks");
+        println!("no open tasks");
         return;
     }
 

@@ -81,7 +81,13 @@ pub enum Commands {
         id: u64,
         key: String,
     },
-    Delete {
+    Abandon {
+        id: u64,
+    },
+    Mistake {
+        id: u64,
+    },
+    Duplicate {
         id: u64,
     },
     Done {
@@ -167,11 +173,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_delete_command() {
-        let cli = Cli::parse_from(["taskforce", "delete", "7"]);
+    fn parses_status_transition_commands() {
+        let cli = Cli::parse_from(["taskforce", "abandon", "7"]);
 
         match cli.command {
-            Commands::Delete { id } => assert_eq!(id, 7),
+            Commands::Abandon { id } => assert_eq!(id, 7),
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let cli = Cli::parse_from(["taskforce", "mistake", "8"]);
+        match cli.command {
+            Commands::Mistake { id } => assert_eq!(id, 8),
+            other => panic!("unexpected command: {other:?}"),
+        }
+
+        let cli = Cli::parse_from(["taskforce", "duplicate", "9"]);
+        match cli.command {
+            Commands::Duplicate { id } => assert_eq!(id, 9),
             other => panic!("unexpected command: {other:?}"),
         }
     }
