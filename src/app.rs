@@ -3,11 +3,11 @@ use anyhow::Result;
 use crate::backend::{Task, TaskBackend};
 use crate::cli::{Cli, Commands};
 use crate::config::AppConfig;
-use crate::taskwarrior::TaskwarriorClient;
+use crate::local_backend::LocalBackend;
 
 pub async fn run(cli: Cli) -> Result<()> {
     let config = AppConfig::load()?;
-    let client = TaskwarriorClient::new()?;
+    let client = LocalBackend::new(config.resolve_sqlite_path()?)?;
 
     match cli.command {
         Commands::List => {

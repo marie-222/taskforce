@@ -2,7 +2,7 @@
 
 ## Goal
 
-`taskforce` should provide a Taskwarrior-like CLI and local workflow without being tightly coupled to Taskwarrior as a storage backend.
+`taskforce` should provide a task-oriented CLI and local workflow on top of its own structured storage.
 
 The model should support both:
 
@@ -13,7 +13,7 @@ The model should support both:
 
 - Keep the core task fields explicit and strongly typed.
 - Allow arbitrary extra fields without schema migrations for every new workflow.
-- Preserve a Taskwarrior-like UX where practical, but do not inherit Taskwarrior storage constraints.
+- Preserve a task-focused CLI UX where practical, without inheriting external storage constraints.
 - Make backend replacement possible behind the existing `TaskBackend` abstraction.
 
 ## High-level model
@@ -71,7 +71,7 @@ Why these are core:
 - timestamps are necessary for sorting and auditability
 - `target_date`, `deadline`, and `launch_date` match the user's real task template needs
 - optional `*_time_hint` fields cover cases like `午前中` or `15:00まで` without forcing full timestamps everywhere
-- `project` and `tags` support Taskwarrior-like grouping
+- `project` and `tags` support practical task grouping
 
 ## Annotations
 
@@ -92,7 +92,7 @@ Initial `AnnotationKind` candidates:
 - `decision`
 - `handover`
 
-This intentionally borrows the usefulness of Taskwarrior annotations without inheriting its storage format.
+Annotations stay first-class because they are useful operationally, not because they mirror another tool's storage format.
 
 ## Extra fields
 
@@ -178,7 +178,7 @@ CREATE TABLE task_annotations (
 
 ## CLI implications
 
-The CLI should stay Taskwarrior-like where it helps:
+The CLI should stay task-centric and compact where it helps:
 
 - `add`
 - `list`
@@ -205,15 +205,13 @@ Expected behavior:
 Near-term path:
 
 1. Keep the current `TaskBackend` abstraction.
-2. Treat the existing Taskwarrior implementation as a temporary adapter.
-3. Introduce a new local backend implementing the structured model.
-4. Gradually move CLI and UI behavior to target the new model first.
+2. Use the local SQLite backend as the primary structured store.
+3. Gradually move CLI and UI behavior to target the structured model first.
 
 ## Non-goals for the first local backend
 
-- full Taskwarrior storage compatibility
 - multi-user sync
 - remote API design
 - arbitrary schema validation language
 
-The first goal is a local, structured, single-user backend with a Taskwarrior-like CLI surface.
+The first goal is a local, structured, single-user backend with a compact task-oriented CLI surface.

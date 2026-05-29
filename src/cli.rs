@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(name = "taskforce")]
-#[command(about = "Thin Taskwarrior-backed task workflow")]
+#[command(about = "Local structured task workflow")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

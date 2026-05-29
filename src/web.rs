@@ -197,7 +197,7 @@ const INDEX_HTML: &str = r#"<!DOCTYPE html>
         <div class="eyebrow">Local Task Console</div>
         <h1>taskforce</h1>
         <p class="lede">
-          Pending Tasks from your local Taskwarrior database, served over a tiny local HTTP view.
+          Pending tasks from your local taskforce database, served over a tiny local HTTP view.
         </p>
       </section>
       <section class="panel">
@@ -285,26 +285,31 @@ mod tests {
 
     #[tokio::test]
     async fn api_tasks_returns_task_json() {
-        let backend = MockBackend { tasks: vec![Task {
-            id: Some(3),
-            uuid: "abc".into(),
-            core: CoreTaskFields {
-                title: "Ship MVP".into(),
-                status: TaskStatus::Pending,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-                target_date: None,
-                deadline: None,
-                launch_date: None,
-                target_time_hint: None,
-                deadline_time_hint: None,
-                launch_time_hint: None,
-                project: None,
-                tags: Vec::new(),
-            },
-            annotations: Vec::new(),
-            extra: serde_json::Map::from_iter([("urgency".into(), serde_json::Value::from(7.5))]),
-        }] };
+        let backend = MockBackend {
+            tasks: vec![Task {
+                id: Some(3),
+                uuid: "abc".into(),
+                core: CoreTaskFields {
+                    title: "Ship MVP".into(),
+                    status: TaskStatus::Pending,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                    target_date: None,
+                    deadline: None,
+                    launch_date: None,
+                    target_time_hint: None,
+                    deadline_time_hint: None,
+                    launch_time_hint: None,
+                    project: None,
+                    tags: Vec::new(),
+                },
+                annotations: Vec::new(),
+                extra: serde_json::Map::from_iter([(
+                    "urgency".into(),
+                    serde_json::Value::from(7.5),
+                )]),
+            }],
+        };
         let app = crate::web::app_router(backend);
 
         let response = app

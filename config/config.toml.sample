@@ -3,7 +3,7 @@
 # or, if XDG_CONFIG_HOME is unset:
 #   ~/.config/taskforce/config.toml
 
-# task_bin = "/home/<yourname>/.local/opt/taskwarrior/bin/task"
+# sqlite_path = "/home/<yourname>/.local/share/taskforce/taskforce.db"
 
 [server]
 # host = "127.0.0.1"
