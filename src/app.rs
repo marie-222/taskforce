@@ -6,11 +6,11 @@ use crate::backend::{NewTaskInput, Task, TaskBackend, UpdateTaskInput};
 use crate::chatwork_plugin::import_chatwork_url;
 use crate::cli::{Cli, Commands};
 use crate::config::AppConfig;
-use crate::local_backend::LocalBackend;
+use crate::db_backend::ConfiguredBackend;
 
 pub async fn run(cli: Cli) -> Result<()> {
     let config = AppConfig::load()?;
-    let client = LocalBackend::new(config.resolve_sqlite_path()?)?;
+    let client = ConfiguredBackend::open(&config)?;
 
     match cli.command {
         Commands::List => {

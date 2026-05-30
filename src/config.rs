@@ -8,9 +8,26 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AppConfig {
+    /// Legacy SQLite path. Prefer `[backend].sqlite_path` for new configs.
     pub sqlite_path: Option<PathBuf>,
     #[serde(default)]
+    pub backend: BackendConfig,
+    #[serde(default)]
     pub server: ServerConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BackendConfig {
+    #[serde(default, alias = "type")]
+    pub kind: BackendKind,
+    pub sqlite_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendKind {
+    #[default]
+    Sqlite,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -53,6 +70,10 @@ impl AppConfig {
 
     pub fn resolve_sqlite_path(&self) -> Result<PathBuf> {
         if let Some(path) = sqlite_path_env()? {
+            return Ok(path);
+        }
+
+        if let Some(path) = self.backend.sqlite_path.clone() {
             return Ok(path);
         }
 
@@ -132,7 +153,7 @@ mod tests {
 
     use std::net::{IpAddr, SocketAddr};
 
-    use super::{AppConfig, ServerConfig};
+    use super::{AppConfig, BackendKind, ServerConfig};
 
     #[test]
     fn loads_sqlite_path_from_toml() -> Result<()> {
@@ -142,6 +163,29 @@ mod tests {
         let config = AppConfig::load_from_path(&path)?;
 
         assert_eq!(config.sqlite_path, Some(PathBuf::from("/tmp/taskforce.db")));
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn loads_backend_settings_from_toml() -> Result<()> {
+        let path = unique_temp_path("taskforce-backend-config");
+        fs::write(
+            &path,
+            "[backend]\nkind = \"sqlite\"\nsqlite_path = \"/tmp/backend.db\"\n",
+        )?;
+
+        let config = AppConfig::load_from_path(&path)?;
+
+        assert_eq!(config.backend.kind, BackendKind::Sqlite);
+        assert_eq!(
+            config.backend.sqlite_path,
+            Some(PathBuf::from("/tmp/backend.db"))
+        );
+        assert_eq!(
+            config.resolve_sqlite_path()?,
+            PathBuf::from("/tmp/backend.db")
+        );
         fs::remove_file(path)?;
         Ok(())
     }

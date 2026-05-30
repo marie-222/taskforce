@@ -236,7 +236,8 @@ Expected behavior:
 Near-term path:
 
 1. Keep the current `TaskBackend` abstraction.
-2. Use the local SQLite backend as the primary structured store.
+2. Select concrete database backends through config.
+3. Use the local SQLite backend as the primary structured store.
 3. Gradually move CLI and UI behavior to target the structured model first.
 
 ## Non-goals for the first local backend

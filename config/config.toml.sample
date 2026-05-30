@@ -3,6 +3,11 @@
 # or, if XDG_CONFIG_HOME is unset:
 #   ~/.config/taskforce/config.toml
 
+# Legacy SQLite path. Prefer [backend].sqlite_path for new configs.
+# sqlite_path = "/home/<yourname>/.local/share/taskforce/taskforce.db"
+
+[backend]
+kind = "sqlite"
 # sqlite_path = "/home/<yourname>/.local/share/taskforce/taskforce.db"
 
 [server]
