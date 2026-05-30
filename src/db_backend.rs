@@ -7,6 +7,7 @@ use crate::backend::{NewTaskInput, Task, TaskBackend, UpdateTaskInput};
 use crate::config::{AppConfig, BackendKind};
 use crate::local_backend::LocalBackend;
 use crate::postgres_backend::PostgresBackend;
+use crate::search::TaskSearch;
 
 #[derive(Debug, Clone)]
 pub enum ConfiguredBackend {
@@ -37,6 +38,13 @@ impl TaskBackend for ConfiguredBackend {
         match self {
             Self::Sqlite(backend) => backend.list_pending().await,
             Self::Postgres(backend) => backend.list_pending().await,
+        }
+    }
+
+    async fn search(&self, query: &TaskSearch) -> Result<Vec<Task>> {
+        match self {
+            Self::Sqlite(backend) => backend.search(query).await,
+            Self::Postgres(backend) => backend.search(query).await,
         }
     }
 

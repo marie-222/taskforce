@@ -7,6 +7,7 @@ use crate::chatwork_plugin::import_chatwork_url;
 use crate::cli::{Cli, Commands};
 use crate::config::AppConfig;
 use crate::db_backend::ConfiguredBackend;
+use crate::search::TaskSearch;
 
 pub async fn run(cli: Cli) -> Result<()> {
     let config = AppConfig::load()?;
@@ -15,6 +16,10 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::List => {
             let tasks = client.list_pending().await?;
+            print_tasks(&tasks);
+        }
+        Commands::Search { where_clauses } => {
+            let tasks = client.search(&TaskSearch::new(where_clauses)).await?;
             print_tasks(&tasks);
         }
         Commands::Add {

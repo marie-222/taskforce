@@ -718,9 +718,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.10.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb92f162bf56536459fc83c79b974bb12837acfed43d6bc370a7916d0ae15ecc"
+checksum = "55281c53a1894c864990125767da440a4e630446785086f52523b20033b74498"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1460,7 +1460,24 @@ dependencies = [
  "tokio-postgres",
  "tokio-postgres-rustls",
  "toml",
- "tower",
+]
+
+[[package]]
+name = "taskforce-seed-helper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dotenvy",
+ "rusqlite",
+ "rustls",
+ "rustls-pemfile",
+ "serde_json",
+ "taskforce",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -1862,6 +1879,15 @@ checksum = "6d621441cfc37b84979402712047321980c178f299193a3589d05b99e8763436"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

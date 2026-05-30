@@ -16,6 +16,10 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     List,
+    Search {
+        #[arg(long = "where")]
+        where_clauses: Vec<String>,
+    },
     Add {
         title: String,
         #[arg(long)]
@@ -182,13 +186,25 @@ mod tests {
     }
 
     #[test]
-    fn parses_status_transition_commands() {
-        let cli = Cli::parse_from(["taskforce", "abandon", "7"]);
+    fn parses_search_command() {
+        let cli = Cli::parse_from([
+            "taskforce",
+            "search",
+            "--where",
+            "status = 'active'",
+            "--where",
+            "chatwork.requester = '石井'",
+        ]);
 
         match cli.command {
-            Commands::Abandon { id } => assert_eq!(id, 7),
+            Commands::Search { where_clauses } => {
+                assert_eq!(where_clauses.len(), 2);
+                assert_eq!(where_clauses[0], "status = 'active'");
+                assert_eq!(where_clauses[1], "chatwork.requester = '石井'");
+            }
             other => panic!("unexpected command: {other:?}"),
         }
+    }
 
     #[test]
     fn parses_status_transition_commands() {

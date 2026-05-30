@@ -12,6 +12,7 @@ use tokio_postgres::{Client, Row};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::backend::{NewTaskInput, Task, TaskBackend, TaskStatus, UpdateTaskInput};
+use crate::search::{TaskSearch, compile_postgres};
 
 #[derive(Debug, Clone)]
 pub struct PostgresBackend {
@@ -95,6 +96,18 @@ impl PostgresBackend {
 impl TaskBackend for PostgresBackend {
     async fn list_pending(&self) -> Result<Vec<Task>> {
         let rows = self.client.query(TASK_LIST_PENDING_SQL, &[]).await?;
+        rows.iter().map(map_task_row).collect()
+    }
+
+    async fn search(&self, query: &TaskSearch) -> Result<Vec<Task>> {
+        let expr = query.parse()?;
+        let compiled = compile_postgres(expr.as_ref())?;
+        let params = compiled
+            .params
+            .iter()
+            .map(|value| value.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+            .collect::<Vec<_>>();
+        let rows = self.client.query(&compiled.sql, &params).await?;
         rows.iter().map(map_task_row).collect()
     }
 

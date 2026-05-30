@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde_json::Map;
 
 use crate::backend::{NewTaskInput, Task, TaskBackend, TaskStatus, UpdateTaskInput};
+use crate::search::{TaskSearch, compile_sqlite};
 
 #[derive(Debug, Clone)]
 pub struct LocalBackend {
@@ -153,6 +154,16 @@ impl TaskBackend for LocalBackend {
         )?;
 
         let rows = statement.query_map([], map_task_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    async fn search(&self, query: &TaskSearch) -> Result<Vec<Task>> {
+        let expr = query.parse()?;
+        let compiled = compile_sqlite(expr.as_ref())?;
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(&compiled.sql)?;
+        let rows = statement.query_map(params_from_iter(compiled.params.iter()), map_task_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
@@ -556,6 +567,7 @@ mod tests {
 
     use super::LocalBackend;
     use crate::backend::{NewTaskInput, TaskBackend, UpdateTaskInput};
+    use crate::search::TaskSearch;
 
     #[tokio::test]
     async fn add_and_list_pending_tasks() -> Result<()> {
@@ -689,6 +701,55 @@ mod tests {
 
         let edited = backend.unset_extra(id, "requester").await?;
         assert!(!edited.extra.contains_key("requester"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn searches_tasks_with_core_and_plugin_filters() -> Result<()> {
+        let backend = LocalBackend::new(unique_db_path("taskforce-local-backend-search"))?;
+
+        let first = backend
+            .add(NewTaskInput {
+                title: "Banner update".into(),
+                description: Some("Landing page hero banner".into()),
+                deadline: Some(chrono::NaiveDate::from_ymd_opt(2026, 6, 7).expect("date")),
+                tags: vec!["ops".into()],
+                ..Default::default()
+            })
+            .await?;
+        backend
+            .set_extra(
+                first.id.expect("id"),
+                "chatwork",
+                serde_json::json!({ "requester": "石井" }),
+            )
+            .await?;
+
+        let second = backend
+            .add(NewTaskInput {
+                title: "Design QA".into(),
+                deadline: Some(chrono::NaiveDate::from_ymd_opt(2026, 6, 20).expect("date")),
+                tags: vec!["design".into()],
+                ..Default::default()
+            })
+            .await?;
+        backend
+            .set_extra(
+                second.id.expect("id"),
+                "chatwork",
+                serde_json::json!({ "requester": "田中" }),
+            )
+            .await?;
+
+        let search = TaskSearch::new(vec![
+            "deadline <= '2026-06-10'".into(),
+            "tag = 'ops'".into(),
+            "chatwork.requester = '石井'".into(),
+        ]);
+        let tasks = backend.search(&search).await?;
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title(), "Banner update");
         Ok(())
     }
 

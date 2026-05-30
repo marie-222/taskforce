@@ -338,6 +338,7 @@ mod tests {
     use crate::backend::{
         CoreTaskFields, NewTaskInput, Task, TaskBackend, TaskStatus, UpdateTaskInput,
     };
+    use crate::search::TaskSearch;
 
     #[derive(Clone)]
     struct MockBackend {
@@ -347,6 +348,10 @@ mod tests {
     #[async_trait]
     impl TaskBackend for MockBackend {
         async fn list_pending(&self) -> anyhow::Result<Vec<Task>> {
+            Ok(self.tasks.clone())
+        }
+
+        async fn search(&self, _query: &TaskSearch) -> anyhow::Result<Vec<Task>> {
             Ok(self.tasks.clone())
         }
 

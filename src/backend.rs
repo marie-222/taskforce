@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 use std::fmt;
 use std::str::FromStr;
 
+use crate::search::TaskSearch;
 
 pub type TaskId = Option<u64>;
 
@@ -194,6 +195,7 @@ impl Task {
 #[async_trait]
 pub trait TaskBackend {
     async fn list_pending(&self) -> Result<Vec<Task>>;
+    async fn search(&self, query: &TaskSearch) -> Result<Vec<Task>>;
     async fn add(&self, input: NewTaskInput) -> Result<Task>;
     async fn edit(&self, id: u64, input: UpdateTaskInput) -> Result<Task>;
     async fn get_task(&self, id: u64) -> Result<Task>;

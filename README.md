@@ -66,16 +66,18 @@ taskforce/
 cargo run -- list
 cargo run -- --env=development list
 cargo run -- add "Write docs" --deadline 2026-06-05 --project taskforce --tag docs
+cargo run -- add "Wait for design handoff" --status waiting --tag design
 cargo run -- edit 1 "Write better docs" --target-date 2026-06-02 --launch-date 2026-06-10
 cargo run -- edit 1 --clear-deadline --clear-project
 cargo run -- set 1 requester ishii
 cargo run -- get 1 requester
 cargo run -- unset 1 requester
+cargo run -- status 1
+cargo run -- status 1 active
+cargo run -- search --where "status in ('active', 'waiting')"
+cargo run -- search --where "deadline between '2026-06-01' and '2026-06-30'" --where "chatwork.requester = '石井'"
 cargo run -- import-chatwork "https://www.chatwork.com/#!rid36219958-2111786210627420160"
 cargo run -- done 1
-cargo run -- abandon 1
-cargo run -- mistake 1
-cargo run -- duplicate 1
 TASKFORCE_SQLITE_PATH="$HOME/.local/share/taskforce/taskforce.db" cargo run -- serve
 TASKFORCE_POSTGRES_URL="postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres?sslmode=require" cargo run -- serve
 TASKFORCE_POSTGRES_HOST="db.<project-ref>.supabase.co" TASKFORCE_POSTGRES_USER="postgres" TASKFORCE_POSTGRES_PASS="<password>" TASKFORCE_POSTGRES_PORT="5432" TASKFORCE_POSTGRES_DB="postgres" cargo run -- serve
@@ -84,6 +86,19 @@ TASKFORCE_POSTGRES_SSL_ROOT_CERT="$HOME/.config/taskforce/supabase-prod-ca-2021.
 
 - `serve` binds to `127.0.0.1` and chooses a free port unless a host or port is configured.
 - Manual runs load `taskforce.env` first, then the selected profile's `env_file` when `TASKFORCE_ENV` or `--env=<profile>` resolves to a configured profile.
+
+## Development seed data
+
+- `scripts/dev/seed_dummy_tasks.py` builds and runs a dev-only Rust bulk seeder.
+- It defaults to `--env development --count 24 --seed 42 --start 1`.
+- Each run uses `project = "seed-<seed>"` unless `--project` is given.
+- Use `--start` to continue the same deterministic series from the middle without replacing the earlier rows.
+
+```bash
+scripts/dev/seed_dummy_tasks.py
+scripts/dev/seed_dummy_tasks.py --env development --seed 77 --start 301 --count 300
+target/debug/taskforce --env=development search --where "project = 'seed-77'" --where "status in ('active', 'waiting')"
+```
 
 ## systemd user service
 
