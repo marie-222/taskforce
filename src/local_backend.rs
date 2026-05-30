@@ -160,6 +160,7 @@ impl TaskBackend for LocalBackend {
     async fn add(&self, input: NewTaskInput) -> Result<Task> {
         let mut task = Task::new(None, generate_local_uuid(), input.title);
         task.core.description = input.description;
+        task.core.status = input.status;
         task.core.target_date = input.target_date;
         task.core.deadline = input.deadline;
         task.core.launch_date = input.launch_date;
@@ -321,6 +322,10 @@ impl TaskBackend for LocalBackend {
         self.fetch_task(id)
     }
 
+    async fn set_status(&self, id: u64, status: TaskStatus) -> Result<Task> {
+        update_task_status(self, id, status)
+    }
+
     async fn set_extra(&self, id: u64, key: &str, value: serde_json::Value) -> Result<Task> {
         let connection = self.connection()?;
         let mut task = self.fetch_task(id)?;
@@ -361,19 +366,19 @@ impl TaskBackend for LocalBackend {
     }
 
     async fn mark_done(&self, id: u64) -> Result<Task> {
-        update_task_status(self, id, TaskStatus::Done)
+        self.set_status(id, TaskStatus::Done).await
     }
 
     async fn mark_abandoned(&self, id: u64) -> Result<Task> {
-        update_task_status(self, id, TaskStatus::Abandoned)
+        self.set_status(id, TaskStatus::Abandoned).await
     }
 
     async fn mark_mistaken(&self, id: u64) -> Result<Task> {
-        update_task_status(self, id, TaskStatus::Mistaken)
+        self.set_status(id, TaskStatus::Mistaken).await
     }
 
     async fn mark_duplicated(&self, id: u64) -> Result<Task> {
-        update_task_status(self, id, TaskStatus::Duplicated)
+        self.set_status(id, TaskStatus::Duplicated).await
     }
 
     async fn next_task(&self) -> Result<Option<Task>> {
@@ -456,17 +461,7 @@ fn task_status_id(status: TaskStatus) -> i64 {
 }
 
 fn parse_task_status(value: &str) -> TaskStatus {
-    match value {
-        "unstarted" => TaskStatus::Unstarted,
-        "active" => TaskStatus::Active,
-        "waiting" => TaskStatus::Waiting,
-        "pending" | "suspended" => TaskStatus::Suspended,
-        "done" => TaskStatus::Done,
-        "abandoned" => TaskStatus::Abandoned,
-        "mistaken" => TaskStatus::Mistaken,
-        "duplicated" => TaskStatus::Duplicated,
-        _ => TaskStatus::Unstarted,
-    }
+    value.parse().unwrap_or(TaskStatus::Unstarted)
 }
 
 fn seed_task_statuses(connection: &Connection) -> Result<()> {

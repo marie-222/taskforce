@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
 
+use crate::backend::TaskStatus;
 use crate::backend::{NewTaskInput, Task, TaskBackend, UpdateTaskInput};
 use crate::config::{AppConfig, BackendKind};
 use crate::local_backend::LocalBackend;
@@ -57,6 +58,13 @@ impl TaskBackend for ConfiguredBackend {
         match self {
             Self::Sqlite(backend) => backend.get_task(id).await,
             Self::Postgres(backend) => backend.get_task(id).await,
+        }
+    }
+
+    async fn set_status(&self, id: u64, status: TaskStatus) -> Result<Task> {
+        match self {
+            Self::Sqlite(backend) => backend.set_status(id, status).await,
+            Self::Postgres(backend) => backend.set_status(id, status).await,
         }
     }
 

@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+use crate::backend::TaskStatus;
+
 #[derive(Debug, Parser)]
 #[command(name = "taskforce")]
 #[command(about = "Local structured task workflow")]
@@ -16,6 +18,8 @@ pub enum Commands {
     List,
     Add {
         title: String,
+        #[arg(long)]
+        status: Option<TaskStatus>,
         #[arg(long)]
         target_date: Option<String>,
         #[arg(long)]
@@ -76,6 +80,10 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    Status {
+        id: u64,
+        status: Option<TaskStatus>,
+    },
     Get {
         id: u64,
         key: String,
@@ -83,15 +91,6 @@ pub enum Commands {
     Unset {
         id: u64,
         key: String,
-    },
-    Abandon {
-        id: u64,
-    },
-    Mistake {
-        id: u64,
-    },
-    Duplicate {
-        id: u64,
     },
     ImportChatwork {
         url: String,
@@ -107,7 +106,7 @@ pub enum Commands {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Commands};
+    use super::{Cli, Commands, TaskStatus};
 
     #[test]
     fn parses_edit_command() {
@@ -147,6 +146,8 @@ mod tests {
             "taskforce",
             "add",
             "Rewrite spec",
+            "--status",
+            "waiting",
             "--target-date",
             "2026-06-02",
             "--deadline",
@@ -162,6 +163,7 @@ mod tests {
         match cli.command {
             Commands::Add {
                 title,
+                status,
                 target_date,
                 deadline,
                 project,
@@ -169,6 +171,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(title, "Rewrite spec");
+                assert_eq!(status, Some(TaskStatus::Waiting));
                 assert_eq!(target_date.as_deref(), Some("2026-06-02"));
                 assert_eq!(deadline.as_deref(), Some("2026-06-05"));
                 assert_eq!(project.as_deref(), Some("taskforce"));
@@ -187,15 +190,23 @@ mod tests {
             other => panic!("unexpected command: {other:?}"),
         }
 
-        let cli = Cli::parse_from(["taskforce", "mistake", "8"]);
+    #[test]
+    fn parses_status_transition_commands() {
+        let cli = Cli::parse_from(["taskforce", "status", "10", "waiting"]);
         match cli.command {
-            Commands::Mistake { id } => assert_eq!(id, 8),
+            Commands::Status { id, status } => {
+                assert_eq!(id, 10);
+                assert_eq!(status, Some(TaskStatus::Waiting));
+            }
             other => panic!("unexpected command: {other:?}"),
         }
 
-        let cli = Cli::parse_from(["taskforce", "duplicate", "9"]);
+        let cli = Cli::parse_from(["taskforce", "status", "11"]);
         match cli.command {
-            Commands::Duplicate { id } => assert_eq!(id, 9),
+            Commands::Status { id, status } => {
+                assert_eq!(id, 11);
+                assert_eq!(status, None);
+            }
             other => panic!("unexpected command: {other:?}"),
         }
     }

@@ -3,6 +3,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::fmt;
+use std::str::FromStr;
+
 
 pub type TaskId = Option<u64>;
 
@@ -39,6 +42,7 @@ pub struct CoreTaskFields {
 pub struct NewTaskInput {
     pub title: String,
     pub description: Option<String>,
+    pub status: TaskStatus,
     pub target_date: Option<NaiveDate>,
     pub deadline: Option<NaiveDate>,
     pub launch_date: Option<NaiveDate>,
@@ -83,6 +87,47 @@ pub enum TaskStatus {
     Abandoned,
     Mistaken,
     Duplicated,
+}
+
+impl TaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unstarted => "unstarted",
+            Self::Active => "active",
+            Self::Waiting => "waiting",
+            Self::Suspended => "suspended",
+            Self::Done => "done",
+            Self::Abandoned => "abandoned",
+            Self::Mistaken => "mistaken",
+            Self::Duplicated => "duplicated",
+        }
+    }
+}
+
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str((*self).as_str())
+    }
+}
+
+impl FromStr for TaskStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "unstarted" => Ok(Self::Unstarted),
+            "active" => Ok(Self::Active),
+            "waiting" => Ok(Self::Waiting),
+            "pending" | "suspended" => Ok(Self::Suspended),
+            "done" => Ok(Self::Done),
+            "abandoned" => Ok(Self::Abandoned),
+            "mistaken" => Ok(Self::Mistaken),
+            "duplicated" => Ok(Self::Duplicated),
+            _ => Err(format!(
+                "invalid status `{value}`; expected one of: unstarted, active, waiting, suspended, done, abandoned, mistaken, duplicated"
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,6 +197,7 @@ pub trait TaskBackend {
     async fn add(&self, input: NewTaskInput) -> Result<Task>;
     async fn edit(&self, id: u64, input: UpdateTaskInput) -> Result<Task>;
     async fn get_task(&self, id: u64) -> Result<Task>;
+    async fn set_status(&self, id: u64, status: TaskStatus) -> Result<Task>;
     async fn set_extra(&self, id: u64, key: &str, value: Value) -> Result<Task>;
     async fn get_extra(&self, id: u64, key: &str) -> Result<Option<Value>>;
     async fn unset_extra(&self, id: u64, key: &str) -> Result<Task>;

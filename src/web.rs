@@ -366,6 +366,10 @@ mod tests {
                 .ok_or_else(|| anyhow::anyhow!("task {id} was not found"))
         }
 
+        async fn set_status(&self, _id: u64, _status: TaskStatus) -> anyhow::Result<Task> {
+            unreachable!("not used in web tests")
+        }
+
         async fn set_extra(
             &self,
             _id: u64,

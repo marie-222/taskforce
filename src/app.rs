@@ -19,6 +19,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
         Commands::Add {
             title,
+            status,
             target_date,
             deadline,
             launch_date,
@@ -32,6 +33,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 .add(NewTaskInput {
                     title,
                     description: None,
+                    status: status.unwrap_or_default(),
                     target_date: parse_optional_date(target_date)?,
                     deadline: parse_optional_date(deadline)?,
                     launch_date: parse_optional_date(launch_date)?,
@@ -101,6 +103,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             let task = client.set_extra(id, &key, value).await?;
             println!("updated {}: {}", task.id_text(), task.title());
         }
+        Commands::Status { id, status } => {
+            if let Some(status) = status {
+                let task = client.set_status(id, status).await?;
+                println!("status {}: {} -> {}", task.id_text(), task.title(), status);
+            } else {
+                let task = client.get_task(id).await?;
+                println!("{} {}", task.id_text(), task.core.status);
+            }
+        }
         Commands::Get { id, key } => match client.get_extra(id, &key).await? {
             Some(value) => println!("{}", serde_json::to_string_pretty(&value)?),
             None => println!("null"),
@@ -116,18 +127,6 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::ImportChatwork { url } => {
             let task = import_chatwork_url(&client, &url).await?;
             println!("imported {}: {}", task.id_text(), task.title());
-        }
-        Commands::Abandon { id } => {
-            let task = client.mark_abandoned(id).await?;
-            println!("abandoned {}: {}", task.id_text(), task.title());
-        }
-        Commands::Mistake { id } => {
-            let task = client.mark_mistaken(id).await?;
-            println!("mistaken {}: {}", task.id_text(), task.title());
-        }
-        Commands::Duplicate { id } => {
-            let task = client.mark_duplicated(id).await?;
-            println!("duplicated {}: {}", task.id_text(), task.title());
         }
         Commands::Next => match client.next_task().await? {
             Some(task) => println!("next {}: {}", task.id_text(), task.title()),
