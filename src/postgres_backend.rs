@@ -104,6 +104,11 @@ impl TaskBackend for PostgresBackend {
         rows.iter().map(map_task_row).collect()
     }
 
+    async fn list_all(&self) -> Result<Vec<Task>> {
+        let rows = self.client.query(TASK_LIST_ALL_SQL, &[]).await?;
+        rows.iter().map(map_task_row).collect()
+    }
+
     async fn search(&self, query: &TaskSearch) -> Result<Vec<Task>> {
         let expr = query.parse()?;
         let compiled = compile_postgres(expr.as_ref())?;
@@ -605,6 +610,45 @@ ORDER BY
     WHEN 'waiting' THEN 2
     WHEN 'suspended' THEN 3
     ELSE 4
+  END ASC,
+  CASE WHEN deadline IS NULL THEN 1 ELSE 0 END,
+  deadline ASC,
+  CASE WHEN target_date IS NULL THEN 1 ELSE 0 END,
+  target_date ASC,
+  created_at ASC
+"#;
+
+const TASK_LIST_ALL_SQL: &str = r#"
+SELECT
+  tasks.id,
+  tasks.uuid,
+  tasks.title,
+  tasks.description,
+  task_statuses.name AS status_name,
+  tasks.created_at,
+  tasks.updated_at,
+  tasks.target_date,
+  tasks.deadline,
+  tasks.launch_date,
+  tasks.target_time_hint,
+  tasks.deadline_time_hint,
+  tasks.launch_time_hint,
+  tasks.project,
+  tasks.tags_json,
+  tasks.extra_json
+FROM tasks
+JOIN task_statuses ON task_statuses.id = tasks.status_id
+ORDER BY
+  CASE task_statuses.name
+    WHEN 'active' THEN 0
+    WHEN 'unstarted' THEN 1
+    WHEN 'waiting' THEN 2
+    WHEN 'suspended' THEN 3
+    WHEN 'done' THEN 4
+    WHEN 'abandoned' THEN 5
+    WHEN 'mistaken' THEN 6
+    WHEN 'duplicated' THEN 7
+    ELSE 8
   END ASC,
   CASE WHEN deadline IS NULL THEN 1 ELSE 0 END,
   deadline ASC,

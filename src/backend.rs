@@ -300,6 +300,7 @@ pub fn unset_extra_path(extra: &mut Map<String, Value>, key: &str) -> bool {
 #[async_trait]
 pub trait TaskBackend {
     async fn list_pending(&self) -> Result<Vec<Task>>;
+    async fn list_all(&self) -> Result<Vec<Task>>;
     async fn search(&self, query: &TaskSearch) -> Result<Vec<Task>>;
     async fn add(&self, input: NewTaskInput) -> Result<Task>;
     async fn edit(&self, id: u64, input: UpdateTaskInput) -> Result<Task>;

@@ -8,9 +8,10 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{Html, IntoResponse};
 use axum::routing::get;
 use axum::{Json, Router, http::StatusCode};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::backend::TaskBackend;
+use crate::backend::{TaskBackend, TaskStatus};
 use crate::dto::{TaskDto, TaskListItemDto};
 use crate::i18n::tr;
 use crate::plugin::{plugin_manifests, tr_plugin};
@@ -32,15 +33,21 @@ where
 {
     Router::new()
         .route("/", get(index))
+        .route("/tasks/all", get(all_tasks))
         .route("/assets/index.css", get(index_css_asset))
         .route("/assets/index.js", get(index_js_asset))
         .route("/assets/task_detail.css", get(task_detail_css_asset))
         .route("/assets/task_detail.js", get(task_detail_js_asset))
         .route("/api/tasks", get(api_tasks::<B>))
+        .route("/api/tasks/all", get(api_all_tasks::<B>))
+        .route("/api/search", get(api_search::<B>))
+        .route("/api/status/{status}/tasks", get(api_status_tasks::<B>))
         .route("/api/tags/{tag}/tasks", get(api_tag_tasks::<B>))
         .route("/api/tasks/{id}", get(api_task::<B>))
         .route("/api/plugin-manifests", get(api_plugin_manifests))
         .route("/tags/{tag}", get(tag_tasks))
+        .route("/search", get(search_page))
+        .route("/status/{status}", get(status_tasks))
         .route("/tasks/{id}", get(task_detail))
         .with_state(backend)
 }
@@ -49,22 +56,13 @@ async fn index() -> Html<String> {
     Html(render_index_html())
 }
 
-async fn api_tasks<B>(
-    State(backend): State<B>,
-) -> Result<Json<Vec<TaskListItemDto>>, axum::http::StatusCode>
-where
-    B: TaskBackend + Clone + Send + Sync + 'static,
-{
-    backend
-        .list_pending()
-        .await
-        .map(|tasks| Json(tasks.iter().map(TaskListItemDto::from).collect()))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+async fn all_tasks() -> Html<String> {
+    Html(render_all_tasks_html())
 }
 
-async fn api_tag_tasks<B>(
-    Path(tag): Path<String>,
+async fn api_tasks<B>(
     State(backend): State<B>,
+    axum::extract::Query(params): axum::extract::Query<ListQueryParams>,
 ) -> Result<Json<Vec<TaskListItemDto>>, axum::http::StatusCode>
 where
     B: TaskBackend + Clone + Send + Sync + 'static,
@@ -74,7 +72,109 @@ where
         .await
         .map(|tasks| {
             Json(
-                tasks
+                filter_tasks_by_query(tasks, params.q.as_deref())
+                    .iter()
+                    .map(TaskListItemDto::from)
+                    .collect(),
+            )
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn api_all_tasks<B>(
+    State(backend): State<B>,
+    axum::extract::Query(params): axum::extract::Query<ListQueryParams>,
+) -> Result<Json<Vec<TaskListItemDto>>, axum::http::StatusCode>
+where
+    B: TaskBackend + Clone + Send + Sync + 'static,
+{
+    backend
+        .list_all()
+        .await
+        .map(|tasks| {
+            Json(
+                filter_tasks_by_query(tasks, params.q.as_deref())
+                    .iter()
+                    .map(TaskListItemDto::from)
+                    .collect(),
+            )
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn api_status_tasks<B>(
+    Path(status): Path<String>,
+    State(backend): State<B>,
+    axum::extract::Query(params): axum::extract::Query<ListQueryParams>,
+) -> Result<Json<Vec<TaskListItemDto>>, axum::http::StatusCode>
+where
+    B: TaskBackend + Clone + Send + Sync + 'static,
+{
+    let status = status
+        .parse::<TaskStatus>()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    backend
+        .list_all()
+        .await
+        .map(|tasks| {
+            Json(
+                filter_tasks_by_query(tasks, params.q.as_deref())
+                    .iter()
+                    .filter(|task| task.core.status == status)
+                    .map(TaskListItemDto::from)
+                    .collect(),
+            )
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn api_search<B>(
+    State(backend): State<B>,
+    axum::extract::Query(params): axum::extract::Query<SearchQueryParams>,
+) -> Result<Json<Vec<TaskListItemDto>>, axum::http::StatusCode>
+where
+    B: TaskBackend + Clone + Send + Sync + 'static,
+{
+    let where_clauses = params
+        .where_clause
+        .as_deref()
+        .map(|value| {
+            value
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    backend
+        .search(&crate::search::TaskSearch::new(where_clauses))
+        .await
+        .map(|tasks| {
+            Json(
+                filter_tasks_by_query(tasks, params.q.as_deref())
+                    .iter()
+                    .map(TaskListItemDto::from)
+                    .collect(),
+            )
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn api_tag_tasks<B>(
+    Path(tag): Path<String>,
+    State(backend): State<B>,
+    axum::extract::Query(params): axum::extract::Query<ListQueryParams>,
+) -> Result<Json<Vec<TaskListItemDto>>, axum::http::StatusCode>
+where
+    B: TaskBackend + Clone + Send + Sync + 'static,
+{
+    backend
+        .list_pending()
+        .await
+        .map(|tasks| {
+            Json(
+                filter_tasks_by_query(tasks, params.q.as_deref())
                     .iter()
                     .filter(|task| task.core.tags.iter().any(|candidate| candidate == &tag))
                     .map(TaskListItemDto::from)
@@ -104,12 +204,65 @@ async fn api_plugin_manifests() -> Result<Json<Value>, StatusCode> {
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+#[derive(Debug, Deserialize)]
+struct ListQueryParams {
+    q: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchQueryParams {
+    #[serde(rename = "where")]
+    where_clause: Option<String>,
+    q: Option<String>,
+}
+
+fn filter_tasks_by_query(
+    tasks: Vec<crate::backend::Task>,
+    query: Option<&str>,
+) -> Vec<crate::backend::Task> {
+    let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) else {
+        return tasks;
+    };
+
+    let query = query.to_lowercase();
+    tasks
+        .into_iter()
+        .filter(|task| task_matches_query(task, &query))
+        .collect()
+}
+
+fn task_matches_query(task: &crate::backend::Task, query: &str) -> bool {
+    let mut haystacks = vec![
+        task.id_text(),
+        task.core.title.clone(),
+        task.core.status.to_string(),
+        task.core.project.clone().unwrap_or_default(),
+        task.core.description.clone().unwrap_or_default(),
+    ];
+    haystacks.extend(task.core.tags.iter().cloned());
+
+    haystacks
+        .into_iter()
+        .any(|value| value.to_lowercase().contains(query))
+}
+
 async fn task_detail(Path(_id): Path<u64>) -> Html<String> {
     Html(render_detail_html())
 }
 
 async fn tag_tasks(Path(tag): Path<String>) -> Html<String> {
     Html(render_tag_index_html(&tag))
+}
+
+async fn status_tasks(Path(status): Path<String>) -> Result<Html<String>, StatusCode> {
+    let status = status
+        .parse::<TaskStatus>()
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(Html(render_status_index_html(status)))
+}
+
+async fn search_page() -> Html<String> {
+    Html(render_search_html())
 }
 
 async fn index_js_asset() -> impl IntoResponse {
@@ -149,13 +302,79 @@ fn map_task_error_status(error: anyhow::Error) -> StatusCode {
 }
 
 fn render_index_html() -> String {
-    render_template(
-        INDEX_HTML_TEMPLATE,
+    render_index_page(
+        "/",
+        "taskforce".to_string(),
+        tr("Open Tasks"),
+        "/api/tasks",
+        tr("No open tasks."),
+        &["active", "unstarted", "waiting", "suspended"],
+        &["active"],
+    )
+}
+
+fn render_all_tasks_html() -> String {
+    render_index_page(
+        "/",
+        tr("Back to Open Tasks"),
+        tr("All Tasks"),
+        "/api/tasks/all",
+        tr("No tasks."),
         &[
-            ("__OPEN_TASKS__", tr("Open Tasks")),
+            "active",
+            "unstarted",
+            "waiting",
+            "suspended",
+            "done",
+            "abandoned",
+            "mistaken",
+            "duplicated",
+        ],
+        &["active"],
+    )
+}
+
+fn render_status_index_html(status: TaskStatus) -> String {
+    let status_name = tr(status.as_str());
+    render_index_page(
+        "/",
+        tr("Back to Open Tasks"),
+        format!("{}: {}", tr("Status"), status_name),
+        &format!("/api/status/{}/tasks", status.as_str()),
+        format!("{} {}", tr("No tasks with status"), status_name),
+        &[status.as_str()],
+        &[status.as_str()],
+    )
+}
+
+fn render_search_html() -> String {
+    render_template(
+        SEARCH_INDEX_HTML_TEMPLATE,
+        &[
+            ("__BACKLINK_HREF__", "/".to_string()),
+            ("__BACKLINK_LABEL__", tr("Back to Open Tasks")),
+            ("__PAGE_TITLE__", escape_html(&tr("Search"))),
+            ("__PANEL_TITLE__", tr("Search Results")),
+            ("__SEARCH__", tr("Search")),
             ("__REFRESH__", tr("Refresh")),
-            ("__NO_OPEN_TASKS__", tr("No open tasks.")),
-            ("__INDEX_CONFIG_JSON__", index_config_json()),
+            ("__RUN_SEARCH__", tr("Run Search")),
+            ("__SEARCH_HINT__", tr("One WHERE clause per line")),
+            (
+                "__INDEX_CONFIG_JSON__",
+                search_config_json(
+                    "/api/search",
+                    &[
+                        "active",
+                        "unstarted",
+                        "waiting",
+                        "suspended",
+                        "done",
+                        "abandoned",
+                        "mistaken",
+                        "duplicated",
+                    ],
+                ),
+            ),
             ("__INDEX_CSS_URL__", asset_url("/assets/index.css")),
             ("__INDEX_JS_URL__", asset_url("/assets/index.js")),
         ],
@@ -188,22 +407,38 @@ fn render_detail_html() -> String {
 }
 
 fn render_tag_index_html(tag: &str) -> String {
+    render_index_page(
+        "/",
+        tr("Back to Open Tasks"),
+        format!("{}: #{tag}", tr("Tag")),
+        &format!("/api/tags/{}/tasks", encode_path_segment(tag)),
+        tr("No open tasks with this tag."),
+        &["active", "unstarted", "waiting", "suspended"],
+        &["active"],
+    )
+}
+
+fn render_index_page(
+    backlink_href: &str,
+    backlink_label: String,
+    title: String,
+    api_url: &str,
+    empty_message: String,
+    status_order: &[&str],
+    open_statuses: &[&str],
+) -> String {
     render_template(
-        TAG_INDEX_HTML_TEMPLATE,
+        INDEX_HTML_TEMPLATE,
         &[
-            (
-                "__TAG_TITLE__",
-                escape_html(&format!("{}: #{tag}", tr("Tag"))),
-            ),
-            ("__OPEN_TASKS__", tr("Open Tasks")),
-            ("__BACK_TO_OPEN_TASKS__", tr("Back to Open Tasks")),
+            ("__BACKLINK_HREF__", backlink_href.to_string()),
+            ("__BACKLINK_LABEL__", backlink_label),
+            ("__PAGE_TITLE__", escape_html(&title)),
+            ("__PANEL_TITLE__", title),
+            ("__SEARCH__", tr("Search")),
             ("__REFRESH__", tr("Refresh")),
             (
                 "__INDEX_CONFIG_JSON__",
-                index_config_json_for_api(
-                    &format!("/api/tags/{}/tasks", encode_path_segment(tag)),
-                    &tr("No open tasks with this tag."),
-                ),
+                index_config_json_for_api(api_url, &empty_message, status_order, open_statuses),
             ),
             ("__INDEX_CSS_URL__", asset_url("/assets/index.css")),
             ("__INDEX_JS_URL__", asset_url("/assets/index.js")),
@@ -264,22 +499,60 @@ fn plugin_fields_value() -> Result<Value> {
     Ok(Value::Object(plugins))
 }
 
-fn index_config_json() -> String {
-    index_config_json_for_api("/api/tasks", &tr("No open tasks."))
-}
-
-fn index_config_json_for_api(api_url: &str, no_open_tasks: &str) -> String {
+fn index_config_json_for_api(
+    api_url: &str,
+    no_open_tasks: &str,
+    status_order: &[&str],
+    open_statuses: &[&str],
+) -> String {
     json!({
         "api_url": api_url,
+        "status_order": status_order,
+        "open_statuses": open_statuses,
         "labels": {
             "urgency": tr("urgency"),
             "no_open_tasks": no_open_tasks,
+            "no_filtered_tasks": tr("No matching tasks in this list."),
             "status": tr("Status"),
             "deadline": tr("Deadline"),
             "target": tr("Target"),
             "launch": tr("Launch"),
             "no_deadline": tr("No deadline"),
             "tasks": tr("tasks"),
+            "all_tasks": tr("All Tasks"),
+            "filter": tr("Filter"),
+        },
+        "status_labels": {
+            "unstarted": tr("unstarted"),
+            "active": tr("active"),
+            "waiting": tr("waiting"),
+            "suspended": tr("suspended"),
+            "done": tr("done"),
+            "abandoned": tr("abandoned"),
+            "mistaken": tr("mistaken"),
+            "duplicated": tr("duplicated"),
+        },
+    })
+    .to_string()
+}
+
+fn search_config_json(search_api_base: &str, status_order: &[&str]) -> String {
+    json!({
+        "search_api_base": search_api_base,
+        "status_order": status_order,
+        "open_statuses": status_order,
+        "labels": {
+            "urgency": tr("urgency"),
+            "no_open_tasks": tr("No matching tasks."),
+            "no_filtered_tasks": tr("No matching tasks in this list."),
+            "status": tr("Status"),
+            "deadline": tr("Deadline"),
+            "target": tr("Target"),
+            "launch": tr("Launch"),
+            "no_deadline": tr("No deadline"),
+            "tasks": tr("tasks"),
+            "search_prompt": tr("Enter at least one WHERE clause."),
+            "filter": tr("Filter"),
         },
         "status_labels": {
             "unstarted": tr("unstarted"),
@@ -363,16 +636,27 @@ const INDEX_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
   </head>
   <body>
     <main>
+      <div class="topline">
+        <a class="backlink" href="__BACKLINK_HREF__">__BACKLINK_LABEL__</a>
+      </div>
       <section class="hero">
-        <h1>taskforce</h1>
+        <h1>__PAGE_TITLE__</h1>
       </section>
       <section class="panel">
         <div class="panel-head">
-          <h2>__OPEN_TASKS__</h2>
+          <div class="panel-head-main">
+            <h2>__PANEL_TITLE__</h2>
+          </div>
           <button id="refresh" type="button">__REFRESH__</button>
+          <div class="panel-head-search">
+            <label class="quick-filter">
+              <span class="quick-filter-icon" aria-hidden="true">⌕</span>
+              <input id="quick-filter" class="quick-filter-input" type="search" aria-label="__SEARCH__" />
+            </label>
+          </div>
         </div>
         <ul id="task-list"></ul>
-        <div id="empty" class="empty" hidden>__NO_OPEN_TASKS__</div>
+        <div id="empty" class="empty" hidden></div>
       </section>
     </main>
     <script id="taskforce-index-config" type="application/json">__INDEX_CONFIG_JSON__</script>
@@ -381,26 +665,43 @@ const INDEX_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
 </html>
 "#;
 
-const TAG_INDEX_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
+const SEARCH_INDEX_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>taskforce tag</title>
+    <title>taskforce search</title>
     <link rel="stylesheet" href="__INDEX_CSS_URL__" />
   </head>
   <body>
     <main>
       <div class="topline">
-        <a class="backlink" href="/">__BACK_TO_OPEN_TASKS__</a>
+        <a class="backlink" href="__BACKLINK_HREF__">__BACKLINK_LABEL__</a>
       </div>
       <section class="hero">
-        <h1>__TAG_TITLE__</h1>
+        <h1>__PAGE_TITLE__</h1>
+      </section>
+      <section class="panel">
+        <form id="search-form" class="search-form">
+          <label class="search-form-label" for="search-where">__SEARCH__</label>
+          <textarea id="search-where" class="search-textarea" name="where" placeholder="__SEARCH_HINT__"></textarea>
+          <div class="search-actions">
+            <button id="search-submit" type="submit">__RUN_SEARCH__</button>
+          </div>
+        </form>
       </section>
       <section class="panel">
         <div class="panel-head">
-          <h2>__OPEN_TASKS__</h2>
+          <div class="panel-head-main">
+            <h2>__PANEL_TITLE__</h2>
+          </div>
           <button id="refresh" type="button">__REFRESH__</button>
+          <div class="panel-head-search">
+            <label class="quick-filter">
+              <span class="quick-filter-icon" aria-hidden="true">⌕</span>
+              <input id="quick-filter" class="quick-filter-input" type="search" aria-label="__SEARCH__" />
+            </label>
+          </div>
         </div>
         <ul id="task-list"></ul>
         <div id="empty" class="empty" hidden></div>
@@ -494,6 +795,10 @@ mod tests {
     #[async_trait]
     impl TaskBackend for MockBackend {
         async fn list_pending(&self) -> anyhow::Result<Vec<Task>> {
+            Ok(self.tasks.clone())
+        }
+
+        async fn list_all(&self) -> anyhow::Result<Vec<Task>> {
             Ok(self.tasks.clone())
         }
 
@@ -741,6 +1046,122 @@ mod tests {
         assert!(text.contains("#release"));
         assert!(text.contains("Back to Open Tasks"));
         assert!(text.contains("/api/tags/release/tasks"));
+    }
+
+    #[tokio::test]
+    async fn all_tasks_page_renders_backlink_and_all_tasks_api() {
+        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/tasks/all")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("All Tasks"));
+        assert!(text.contains("Back to Open Tasks"));
+        assert!(text.contains("/api/tasks/all"));
+    }
+
+    #[tokio::test]
+    async fn status_page_renders_backlink_and_status_api() {
+        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/status/waiting")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("Back to Open Tasks"));
+        assert!(text.contains("/api/status/waiting/tasks"));
+    }
+
+    #[tokio::test]
+    async fn search_page_renders_search_form_and_api() {
+        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/search")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("search-form"));
+        assert!(text.contains("search-where"));
+        assert!(text.contains("/api/search"));
+    }
+
+    #[tokio::test]
+    async fn api_search_uses_where_query_parameters() {
+        let backend = MockBackend {
+            tasks: vec![Task {
+                id: Some(8),
+                uuid: "search".into(),
+                core: CoreTaskFields {
+                    title: "Search Result".into(),
+                    description: None,
+                    status: TaskStatus::Waiting,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                    target_date: None,
+                    deadline: None,
+                    launch_date: None,
+                    target_time_hint: None,
+                    deadline_time_hint: None,
+                    launch_time_hint: None,
+                    project: None,
+                    tags: Vec::new(),
+                },
+                annotations: Vec::new(),
+                extra: Map::new(),
+            }],
+        };
+        let app = crate::web::app_router(backend);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/search?where=status%20=%20'waiting'")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("\"title\":\"Search Result\""));
     }
 
     #[tokio::test]

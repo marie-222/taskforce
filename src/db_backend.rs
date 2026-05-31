@@ -41,6 +41,13 @@ impl TaskBackend for ConfiguredBackend {
         }
     }
 
+    async fn list_all(&self) -> Result<Vec<Task>> {
+        match self {
+            Self::Sqlite(backend) => backend.list_all().await,
+            Self::Postgres(backend) => backend.list_all().await,
+        }
+    }
+
     async fn search(&self, query: &TaskSearch) -> Result<Vec<Task>> {
         match self {
             Self::Sqlite(backend) => backend.search(query).await,
