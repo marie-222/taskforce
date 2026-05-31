@@ -2,6 +2,13 @@
 
 Personal task management system built around a Rust API, a web UI, and a local structured task store.
 
+## License
+
+Licensed under either of the following, at your option:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
 ## Goals
 
 - Keep the core repository focused on the product backend.
