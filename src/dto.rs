@@ -80,7 +80,7 @@ impl From<&Annotation> for AnnotationDto {
 
 fn canonicalize_object(map: &Map<String, Value>) -> Value {
     let mut entries = map.iter().collect::<Vec<_>>();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(left, _)| *left);
 
     let mut canonical = Map::new();
     for (key, value) in entries {
