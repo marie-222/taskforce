@@ -86,6 +86,7 @@ impl LocalBackend {
 
     fn fetch_task(&self, id: u64) -> Result<Task> {
         let connection = self.connection()?;
+        let sqlite_id = sqlite_task_id(id)?;
         let mut statement = connection.prepare(
             r#"
             SELECT
@@ -112,7 +113,7 @@ impl LocalBackend {
         )?;
 
         let mut task = statement
-            .query_row(params![id], map_task_row)
+            .query_row(params![sqlite_id], map_task_row)
             .optional()?
             .ok_or_else(|| anyhow!("task {id} was not found"))?;
         task.annotations = fetch_annotations(&connection, id)?;
@@ -287,6 +288,7 @@ impl TaskBackend for LocalBackend {
     async fn edit(&self, id: u64, input: UpdateTaskInput) -> Result<Task> {
         let connection = self.connection()?;
         let now = Utc::now().to_rfc3339();
+        let sqlite_id = sqlite_task_id(id)?;
         let mut task = self.fetch_task(id)?;
 
         if let Some(title) = input.title {
@@ -375,7 +377,7 @@ impl TaskBackend for LocalBackend {
                 task.core.launch_time_hint,
                 task.core.project,
                 tags_json,
-                id,
+                sqlite_id,
             ],
         )?;
 
@@ -393,9 +395,10 @@ impl TaskBackend for LocalBackend {
     async fn add_annotation(&self, id: u64, kind: AnnotationKind, body: String) -> Result<Task> {
         self.fetch_task(id)?;
         let connection = self.connection()?;
+        let sqlite_id = sqlite_task_id(id)?;
         connection.execute(
             "INSERT INTO task_annotations (task_id, created_at, kind, body) VALUES (?1, ?2, ?3, ?4)",
-            params![id, Utc::now().to_rfc3339(), kind.as_str(), body],
+            params![sqlite_id, Utc::now().to_rfc3339(), kind.as_str(), body],
         )?;
 
         self.fetch_task(id)
@@ -407,6 +410,7 @@ impl TaskBackend for LocalBackend {
 
     async fn set_extra(&self, id: u64, key: &str, value: serde_json::Value) -> Result<Task> {
         let connection = self.connection()?;
+        let sqlite_id = sqlite_task_id(id)?;
         let mut task = self.fetch_task(id)?;
         set_extra_path(&mut task.extra, key, value);
 
@@ -415,7 +419,7 @@ impl TaskBackend for LocalBackend {
             params![
                 serde_json::to_string(&task.extra)?,
                 Utc::now().to_rfc3339(),
-                id
+                sqlite_id
             ],
         )?;
 
@@ -429,6 +433,7 @@ impl TaskBackend for LocalBackend {
 
     async fn unset_extra(&self, id: u64, key: &str) -> Result<Task> {
         let connection = self.connection()?;
+        let sqlite_id = sqlite_task_id(id)?;
         let mut task = self.fetch_task(id)?;
         unset_extra_path(&mut task.extra, key);
 
@@ -437,7 +442,7 @@ impl TaskBackend for LocalBackend {
             params![
                 serde_json::to_string(&task.extra)?,
                 Utc::now().to_rfc3339(),
-                id
+                sqlite_id
             ],
         )?;
 
@@ -467,9 +472,10 @@ impl TaskBackend for LocalBackend {
 
 fn update_task_status(backend: &LocalBackend, id: u64, status: TaskStatus) -> Result<Task> {
     let connection = backend.connection()?;
+    let sqlite_id = sqlite_task_id(id)?;
     let updated = connection.execute(
         "UPDATE tasks SET status_id = ?1, updated_at = ?2 WHERE id = ?3",
-        params![task_status_id(status), Utc::now().to_rfc3339(), id],
+        params![task_status_id(status), Utc::now().to_rfc3339(), sqlite_id],
     )?;
 
     if updated == 0 {
@@ -480,6 +486,7 @@ fn update_task_status(backend: &LocalBackend, id: u64, status: TaskStatus) -> Re
 }
 
 fn fetch_annotations(connection: &Connection, id: u64) -> Result<Vec<Annotation>> {
+    let sqlite_id = sqlite_task_id(id)?;
     let mut statement = connection.prepare(
         r#"
         SELECT created_at, kind, body
@@ -488,7 +495,7 @@ fn fetch_annotations(connection: &Connection, id: u64) -> Result<Vec<Annotation>
         ORDER BY created_at ASC, id ASC
         "#,
     )?;
-    let rows = statement.query_map(params![id], |row| {
+    let rows = statement.query_map(params![sqlite_id], |row| {
         let created_at: String = row.get(0)?;
         let kind: String = row.get(1)?;
         let body: String = row.get(2)?;
@@ -505,6 +512,10 @@ fn fetch_annotations(connection: &Connection, id: u64) -> Result<Vec<Annotation>
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
+}
+
+fn sqlite_task_id(id: u64) -> Result<i64> {
+    i64::try_from(id).map_err(|_| anyhow!("task id {id} is too large for SQLite"))
 }
 
 fn map_task_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
