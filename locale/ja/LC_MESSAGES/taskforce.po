@@ -277,3 +277,18 @@ msgstr "閲覧"
 
 msgid "Statuses"
 msgstr "ステータス一覧"
+
+msgid "Free Word"
+msgstr "フリーワード"
+
+msgid "Title, description, project, tag, ID…"
+msgstr "件名・詳細・プロジェクト・タグ・ID…"
+
+msgid "Advanced"
+msgstr "詳細条件"
+
+msgid "Raw WHERE Clauses"
+msgstr "生のWHERE条件"
+
+msgid "Enter a search term or at least one filter."
+msgstr "検索語か、少なくとも1つの条件を入れてね。"

@@ -15,6 +15,12 @@ const refreshButton = document.getElementById("refresh");
 const quickFilterInput = document.getElementById("quick-filter");
 const searchForm = document.getElementById("search-form");
 const searchTextarea = document.getElementById("search-where");
+const searchQInput = document.getElementById("search-q");
+const searchTagInput = document.getElementById("search-tag");
+const searchTagSuggestions = document.getElementById("search-tag-suggestions");
+const searchStatusInputs = Array.from(
+  document.querySelectorAll('input[name="status"]')
+);
 const statusOrder =
   configuredStatusOrder ?? [
     "active",
@@ -28,6 +34,11 @@ const statusOrder =
   ];
 const apiUrl = config.api_url ?? "/api/tasks";
 const searchApiBase = config.search_api_base ?? null;
+const tagSuggestApi = config.tag_suggest_api ?? null;
+const showQuickFilter = config.show_quick_filter ?? true;
+let knownTags = new Set();
+let tagSuggestionItems = [];
+let activeTagSuggestionIndex = -1;
 
 function initializeNavDrawer() {
   const toggle = document.getElementById("nav-toggle");
@@ -134,26 +145,80 @@ function currentQuickFilter() {
   return String(quickFilterInput?.value ?? "").trim();
 }
 
-function currentSearchClauses() {
-  if (!searchTextarea) {
-    return [];
-  }
-
-  return searchTextarea.value
+function splitWhereLines(value) {
+  return String(value ?? "")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 }
 
+function currentRawSearchClauses() {
+  if (!searchTextarea) {
+    return [];
+  }
+  return splitWhereLines(searchTextarea.value);
+}
+
+function currentStructuredSearchClauses() {
+  if (!searchForm) {
+    return [];
+  }
+
+  const clauses = [];
+  const selectedStatuses = searchStatusInputs
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+  if (selectedStatuses.length === 1) {
+    clauses.push(`status = '${selectedStatuses[0]}'`);
+  } else if (selectedStatuses.length > 1) {
+    clauses.push(
+      `status in (${selectedStatuses.map((status) => `'${status}'`).join(", ")})`
+    );
+  }
+
+  const { confirmedTags } = classifyTagInput();
+  for (const tag of confirmedTags) {
+    clauses.push(`tag = '${tag.replaceAll("'", "''")}'`);
+  }
+
+  return clauses;
+}
+
+function currentSearchClauses() {
+  return [...currentStructuredSearchClauses(), ...currentRawSearchClauses()];
+}
+
+function currentSearchText() {
+  if (!searchForm) {
+    return currentQuickFilter();
+  }
+  return String(searchQInput?.value ?? "").trim();
+}
+
 function syncSearchUrl(clauses) {
   const url = new URL(window.location.href);
-  const quickFilter = currentQuickFilter();
+  const query = currentSearchText();
   url.search = "";
-  if (clauses.length > 0) {
+  if (searchForm) {
+    const selectedStatuses = searchStatusInputs
+      .filter((input) => input.checked)
+      .map((input) => input.value);
+    for (const status of selectedStatuses) {
+      url.searchParams.append("status", status);
+    }
+    const tag = String(searchTagInput?.value ?? "").trim();
+    if (tag) {
+      url.searchParams.set("tag", tag);
+    }
+    const rawWhere = currentRawSearchClauses();
+    if (rawWhere.length > 0) {
+      url.searchParams.set("where", rawWhere.join("\n"));
+    }
+  } else if (clauses.length > 0) {
     url.searchParams.set("where", clauses.join("\n"));
   }
-  if (quickFilter) {
-    url.searchParams.set("q", quickFilter);
+  if (query) {
+    url.searchParams.set("q", query);
   }
   window.history.replaceState({}, "", url);
 }
@@ -164,8 +229,8 @@ function effectiveApiUrl() {
   }
 
   const clauses = currentSearchClauses();
-  const quickFilter = currentQuickFilter();
-  if (clauses.length === 0 && searchForm) {
+  const query = currentSearchText();
+  if (clauses.length === 0 && !query) {
     return null;
   }
 
@@ -173,8 +238,8 @@ function effectiveApiUrl() {
   if (clauses.length > 0) {
     url.searchParams.set("where", clauses.join("\n"));
   }
-  if (quickFilter) {
-    url.searchParams.set("q", quickFilter);
+  if (query) {
+    url.searchParams.set("q", query);
   }
   return url.toString();
 }
@@ -182,16 +247,30 @@ function effectiveApiUrl() {
 function initializeSearchForm() {
   const params = new URLSearchParams(window.location.search);
   const initialQuickFilter = params.get("q");
-  if (initialQuickFilter && quickFilterInput) {
-    quickFilterInput.value = initialQuickFilter;
+  if (initialQuickFilter) {
+    if (searchForm && searchQInput) {
+      searchQInput.value = initialQuickFilter;
+    } else if (quickFilterInput) {
+      quickFilterInput.value = initialQuickFilter;
+    }
   }
 
-  if (!searchForm || !searchTextarea) {
+  if (!searchForm) {
     return;
   }
 
+  const initialStatuses = new Set(params.getAll("status"));
+  for (const input of searchStatusInputs) {
+    input.checked = initialStatuses.has(input.value);
+  }
+
+  const initialTag = params.get("tag");
+  if (initialTag && searchTagInput) {
+    searchTagInput.value = initialTag;
+  }
+
   const initialWhere = params.get("where");
-  if (initialWhere) {
+  if (initialWhere && searchTextarea) {
     searchTextarea.value = initialWhere;
   }
 
@@ -203,21 +282,235 @@ function initializeSearchForm() {
   });
 }
 
+let tagSuggestTimer = null;
+
+function scheduleTagSuggestionsUpdate(delay = 0) {
+  if (tagSuggestTimer) {
+    window.clearTimeout(tagSuggestTimer);
+  }
+  tagSuggestTimer = window.setTimeout(() => {
+    updateTagSuggestions().catch(console.error);
+  }, delay);
+}
+
+function hideTagSuggestions() {
+  if (!searchTagSuggestions) {
+    return;
+  }
+  searchTagSuggestions.hidden = true;
+  searchTagSuggestions.innerHTML = "";
+  tagSuggestionItems = [];
+  activeTagSuggestionIndex = -1;
+}
+
+function tokenizeTagInput(rawValue) {
+  return String(rawValue ?? "")
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+}
+
+function applyTagSuggestion(tag) {
+  if (!searchTagInput) {
+    return;
+  }
+
+  const rawValue = String(searchTagInput.value ?? "");
+  const endsWithWhitespace = /\s$/.test(rawValue);
+  const tokens = tokenizeTagInput(rawValue);
+  const lastToken = tokens.at(-1) ?? null;
+  const hasExactLastToken = lastToken != null && knownTags.has(lastToken);
+
+  if (tokens.length === 0 || endsWithWhitespace || hasExactLastToken) {
+    tokens.push(tag);
+  } else {
+    tokens[tokens.length - 1] = tag;
+  }
+
+  searchTagInput.value = `${tokens.join(" ")} `;
+  searchTagInput.focus();
+  scheduleTagSuggestionsUpdate();
+}
+
+function setActiveTagSuggestion(nextIndex) {
+  activeTagSuggestionIndex = nextIndex;
+  tagSuggestionItems.forEach((item, index) => {
+    item.classList.toggle("search-tag-suggestion--active", index === nextIndex);
+  });
+}
+
+function moveActiveTagSuggestion(delta) {
+  if (tagSuggestionItems.length === 0) {
+    return;
+  }
+
+  if (activeTagSuggestionIndex === -1) {
+    setActiveTagSuggestion(delta > 0 ? 0 : tagSuggestionItems.length - 1);
+    return;
+  }
+
+  const nextIndex =
+    (activeTagSuggestionIndex + delta + tagSuggestionItems.length) %
+    tagSuggestionItems.length;
+  setActiveTagSuggestion(nextIndex);
+}
+
+function acceptActiveTagSuggestion() {
+  if (
+    activeTagSuggestionIndex < 0 ||
+    activeTagSuggestionIndex >= tagSuggestionItems.length
+  ) {
+    return false;
+  }
+
+  const tag = tagSuggestionItems[activeTagSuggestionIndex].dataset.tag;
+  if (!tag) {
+    return false;
+  }
+  applyTagSuggestion(tag);
+  return true;
+}
+
+async function updateTagSuggestions() {
+  if (!searchTagInput || !searchTagSuggestions || !tagSuggestApi) {
+    return;
+  }
+
+  const { confirmedTags, partialTag } = classifyTagInput();
+  const url = new URL(tagSuggestApi, window.location.origin);
+  if (partialTag) {
+    url.searchParams.set("q", partialTag);
+  } else {
+    url.searchParams.set("all", "true");
+  }
+
+  const response = await fetch(url.toString());
+  const tags = await response.json();
+  const availableTags = tags.filter(
+    (candidate) => !confirmedTags.includes(candidate)
+  );
+  if (availableTags.length === 0) {
+    hideTagSuggestions();
+    return;
+  }
+
+  searchTagSuggestions.innerHTML = "";
+  tagSuggestionItems = [];
+  for (const tag of availableTags) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "search-tag-suggestion";
+    button.textContent = `#${tag}`;
+    button.dataset.tag = tag;
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+    button.addEventListener("click", () => {
+      applyTagSuggestion(tag);
+    });
+    searchTagSuggestions.appendChild(button);
+    tagSuggestionItems.push(button);
+  }
+  searchTagSuggestions.hidden = false;
+  setActiveTagSuggestion(-1);
+}
+
+function classifyTagInput() {
+  const rawValue = String(searchTagInput?.value ?? "");
+  const endsWithWhitespace = /\s$/.test(rawValue);
+  const tokens = rawValue.split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return { confirmedTags: [], partialTag: null };
+  }
+
+  const lastToken = tokens.at(-1) ?? null;
+  const hasExactLastToken = lastToken != null && knownTags.has(lastToken);
+  const candidateConfirmed =
+    endsWithWhitespace || hasExactLastToken ? tokens : tokens.slice(0, -1);
+  const confirmedTags = candidateConfirmed.filter((token) => knownTags.has(token));
+  const partialTag =
+    endsWithWhitespace || hasExactLastToken ? null : lastToken;
+  return { confirmedTags, partialTag };
+}
+
+function initializeTagSuggestions() {
+  if (!searchTagInput || !searchTagSuggestions || !tagSuggestApi) {
+    return;
+  }
+
+  searchTagInput.addEventListener("input", () => {
+    scheduleTagSuggestionsUpdate(120);
+  });
+
+  searchTagInput.addEventListener("focus", () => {
+    updateTagSuggestions().catch(console.error);
+  });
+
+  searchTagInput.addEventListener("click", () => {
+    updateTagSuggestions().catch(console.error);
+  });
+
+  searchTagInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActiveTagSuggestion(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActiveTagSuggestion(-1);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      if (!searchTagSuggestions.hidden && acceptActiveTagSuggestion()) {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideTagSuggestions();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (
+      searchTagInput.contains(event.target) ||
+      searchTagSuggestions.contains(event.target)
+    ) {
+      return;
+    }
+    hideTagSuggestions();
+  });
+}
+
+async function initializeKnownTags() {
+  if (!tagSuggestApi) {
+    return;
+  }
+
+  const url = new URL(tagSuggestApi, window.location.origin);
+  url.searchParams.set("all", "true");
+  const response = await fetch(url.toString());
+  const tags = await response.json();
+  knownTags = new Set(tags);
+}
+
 async function loadTasks() {
   taskList.innerHTML = "";
   const requestUrl = effectiveApiUrl();
   if (!requestUrl) {
     emptyState.hidden = false;
     emptyState.textContent = label(
-      "search_prompt",
-      "Enter at least one WHERE clause."
+      "search_prompt_builder",
+      "Enter a search term or at least one filter."
     );
     return;
   }
 
   const response = await fetch(requestUrl);
   const tasks = await response.json();
-  const filterActive = currentQuickFilter().length > 0;
+  const filterActive =
+    currentSearchText().length > 0 || currentSearchClauses().length > 0;
   emptyState.hidden = tasks.length !== 0;
   emptyState.textContent = filterActive
     ? label("no_filtered_tasks", "No matching tasks in this list.")
@@ -275,6 +568,10 @@ refreshButton.addEventListener("click", () => {
   loadTasks().catch(console.error);
 });
 
+if (!showQuickFilter) {
+  quickFilterInput?.closest(".panel-head-search")?.setAttribute("hidden", "");
+}
+
 quickFilterInput?.addEventListener("input", () => {
   if (searchForm) {
     return;
@@ -309,4 +606,8 @@ quickFilterInput?.addEventListener("keydown", (event) => {
 
 initializeSearchForm();
 initializeNavDrawer();
+Promise.all([
+  initializeKnownTags(),
+  initializeTagSuggestions(),
+]).catch(console.error);
 loadTasks().catch(console.error);

@@ -41,6 +41,7 @@ where
         .route("/api/tasks", get(api_tasks::<B>))
         .route("/api/tasks/all", get(api_all_tasks::<B>))
         .route("/api/search", get(api_search::<B>))
+        .route("/api/tags", get(api_tags::<B>))
         .route("/api/status/{status}/tasks", get(api_status_tasks::<B>))
         .route("/api/tags/{tag}/tasks", get(api_tag_tasks::<B>))
         .route("/api/tasks/{id}", get(api_task::<B>))
@@ -184,6 +185,48 @@ where
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn api_tags<B>(
+    State(backend): State<B>,
+    axum::extract::Query(params): axum::extract::Query<ListQueryParams>,
+) -> Result<Json<Vec<String>>, axum::http::StatusCode>
+where
+    B: TaskBackend + Clone + Send + Sync + 'static,
+{
+    backend
+        .list_all()
+        .await
+        .map(|tasks| {
+            let query_tokens = params
+                .q
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(str::to_lowercase)
+                .collect::<Vec<_>>();
+            let mut tags = tasks
+                .into_iter()
+                .flat_map(|task| task.core.tags.into_iter())
+                .filter(|tag| {
+                    if query_tokens.is_empty() {
+                        return true;
+                    }
+                    let tag_lower = tag.to_lowercase();
+                    query_tokens
+                        .iter()
+                        .all(|token| tag_lower.starts_with(token))
+                })
+                .collect::<Vec<_>>();
+            tags.sort();
+            tags.dedup();
+            if !params.all.unwrap_or(false) {
+                tags.truncate(12);
+            }
+            Json(tags)
+        })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn api_task<B>(
     Path(id): Path<u64>,
     State(backend): State<B>,
@@ -207,6 +250,7 @@ async fn api_plugin_manifests() -> Result<Json<Value>, StatusCode> {
 #[derive(Debug, Deserialize)]
 struct ListQueryParams {
     q: Option<String>,
+    all: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,6 +392,25 @@ fn render_status_index_html(status: TaskStatus) -> String {
 }
 
 fn render_search_html() -> String {
+    let search_status_options = [
+        "active",
+        "unstarted",
+        "waiting",
+        "suspended",
+        "done",
+        "abandoned",
+        "mistaken",
+        "duplicated",
+    ]
+    .into_iter()
+    .map(|status| {
+        format!(
+            r#"<label class="search-status-option"><input type="checkbox" name="status" value="{status}" /> <span>{}</span></label>"#,
+            escape_html(&tr(status))
+        )
+    })
+    .collect::<String>();
+
     render_template(
         SEARCH_INDEX_HTML_TEMPLATE,
         &[
@@ -359,7 +422,18 @@ fn render_search_html() -> String {
             ("__SEARCH__", tr("Search")),
             ("__REFRESH__", tr("Refresh")),
             ("__RUN_SEARCH__", tr("Run Search")),
+            ("__FREE_WORD__", tr("Free Word")),
+            (
+                "__FREE_WORD_HINT__",
+                tr("Title, description, project, tag, ID…"),
+            ),
+            ("__STATUS__", tr("Status")),
+            ("__TAG__", tr("Tag")),
+            ("__TAG_HINT__", tr("release")),
+            ("__ADVANCED__", tr("Advanced")),
+            ("__RAW_WHERE__", tr("Raw WHERE Clauses")),
             ("__SEARCH_HINT__", tr("One WHERE clause per line")),
+            ("__SEARCH_STATUS_OPTIONS__", search_status_options),
             (
                 "__INDEX_CONFIG_JSON__",
                 search_config_json(
@@ -602,6 +676,8 @@ fn index_config_json_for_api(
 fn search_config_json(search_api_base: &str, status_order: &[&str]) -> String {
     json!({
         "search_api_base": search_api_base,
+        "tag_suggest_api": "/api/tags",
+        "show_quick_filter": false,
         "status_order": status_order,
         "open_statuses": status_order,
         "labels": {
@@ -609,13 +685,14 @@ fn search_config_json(search_api_base: &str, status_order: &[&str]) -> String {
             "no_open_tasks": tr("No matching tasks."),
             "no_filtered_tasks": tr("No matching tasks in this list."),
             "status": tr("Status"),
+            "free_word": tr("Free Word"),
             "deadline": tr("Deadline"),
             "target": tr("Target"),
             "launch": tr("Launch"),
             "no_deadline": tr("No deadline"),
             "tasks": tr("tasks"),
             "search_prompt": tr("Enter at least one WHERE clause."),
-            "filter": tr("Filter"),
+            "search_prompt_builder": tr("Enter a search term or at least one filter."),
         },
         "status_labels": {
             "unstarted": tr("unstarted"),
@@ -746,10 +823,34 @@ const SEARCH_INDEX_HTML_TEMPLATE: &str = r#"<!DOCTYPE html>
       <section class="hero">
         <h1>__PAGE_TITLE__</h1>
       </section>
-      <section class="panel">
+      <section class="panel panel--search-form">
         <form id="search-form" class="search-form">
-          <label class="search-form-label" for="search-where">__SEARCH__</label>
-          <textarea id="search-where" class="search-textarea" name="where" placeholder="__SEARCH_HINT__"></textarea>
+          <div class="search-builder-grid">
+            <label class="search-form-field">
+              <span class="search-form-label">__FREE_WORD__</span>
+              <input id="search-q" class="search-text-input" type="search" placeholder="__FREE_WORD_HINT__" />
+            </label>
+            <label class="search-form-field">
+              <span class="search-form-label">__TAG__</span>
+              <div class="search-tag-field">
+                <input id="search-tag" class="search-text-input" type="text" placeholder="__TAG_HINT__" autocomplete="off" />
+                <div id="search-tag-suggestions" class="search-tag-suggestions" hidden></div>
+              </div>
+            </label>
+          </div>
+          <fieldset class="search-statuses">
+            <legend class="search-form-label">__STATUS__</legend>
+            <div class="search-status-grid">
+              __SEARCH_STATUS_OPTIONS__
+            </div>
+          </fieldset>
+          <details class="search-advanced">
+            <summary class="search-advanced-summary">__ADVANCED__</summary>
+            <label class="search-form-field" for="search-where">
+              <span class="search-form-label">__RAW_WHERE__</span>
+              <textarea id="search-where" class="search-textarea" name="where" placeholder="__SEARCH_HINT__"></textarea>
+            </label>
+          </details>
           <div class="search-actions">
             <button id="search-submit" type="submit">__RUN_SEARCH__</button>
           </div>
@@ -1065,6 +1166,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_tags_returns_unique_matching_tags() {
+        let first = Task {
+            id: Some(3),
+            uuid: "abc".into(),
+            core: CoreTaskFields {
+                title: "Ship MVP".into(),
+                description: None,
+                status: TaskStatus::Unstarted,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                target_date: None,
+                deadline: None,
+                launch_date: None,
+                target_time_hint: None,
+                deadline_time_hint: None,
+                launch_time_hint: None,
+                project: None,
+                tags: vec!["release".into(), "ops".into(), "ops-release-check".into()],
+            },
+            annotations: Vec::new(),
+            extra: Map::new(),
+        };
+        let second = Task {
+            id: Some(4),
+            uuid: "def".into(),
+            core: CoreTaskFields {
+                title: "Review design".into(),
+                description: None,
+                status: TaskStatus::Active,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                target_date: None,
+                deadline: None,
+                launch_date: None,
+                target_time_hint: None,
+                deadline_time_hint: None,
+                launch_time_hint: None,
+                project: None,
+                tags: vec!["release".into(), "design".into()],
+            },
+            annotations: Vec::new(),
+            extra: Map::new(),
+        };
+        let app = crate::web::app_router(MockBackend {
+            tasks: vec![first, second],
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/tags?q=re")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert_eq!(text, "[\"release\"]");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/tags?q=ops-r")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert_eq!(text, "[\"ops-release-check\"]");
+    }
+
+    #[tokio::test]
     async fn index_page_renders_taskforce_heading() {
         let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
 
@@ -1182,6 +1367,7 @@ mod tests {
         let text = String::from_utf8(body.to_vec()).expect("utf8");
         assert!(text.contains("search-form"));
         assert!(text.contains("search-where"));
+        assert!(text.contains("search-tag-suggestions"));
         assert!(text.contains("/api/search"));
     }
 
