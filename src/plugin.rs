@@ -40,6 +40,8 @@ pub struct PluginCustomField {
     pub label: String,
     #[serde(default)]
     pub placement: PluginFieldPlacement,
+    #[serde(default)]
+    pub renderer: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

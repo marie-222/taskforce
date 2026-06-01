@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::net::SocketAddr;
+use std::path::{Component, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -43,6 +44,7 @@ where
         .route("/assets/favicon.svg", get(favicon_asset))
         .route("/assets/task_detail.css", get(task_detail_css_asset))
         .route("/assets/task_detail.js", get(task_detail_js_asset))
+        .route("/plugin-assets/{plugin_id}/{*path}", get(plugin_asset))
         .route("/api/tasks", get(api_tasks::<B>))
         .route("/api/tasks/all", get(api_all_tasks::<B>))
         .route("/api/search", get(api_search::<B>))
@@ -342,6 +344,38 @@ async fn task_detail_css_asset() -> impl IntoResponse {
     )
 }
 
+async fn plugin_asset(
+    Path((plugin_id, path)): Path<(String, String)>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let manifest = plugin_manifests()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .find(|manifest| manifest.id == plugin_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let relative = plugin_asset_relative_path(&path).ok_or(StatusCode::NOT_FOUND)?;
+    let asset_path = manifest.root_dir.join(relative);
+    let bytes = std::fs::read(&asset_path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let content_type = match asset_path.extension().and_then(|ext| ext.to_str()) {
+        Some("js") => "application/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("svg") => "image/svg+xml; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        _ => "application/octet-stream",
+    };
+    Ok(([(CONTENT_TYPE, content_type)], bytes))
+}
+
+fn plugin_asset_relative_path(path: &str) -> Option<PathBuf> {
+    let mut relative = PathBuf::new();
+    for component in PathBuf::from(path).components() {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            _ => return None,
+        }
+    }
+    (!relative.as_os_str().is_empty()).then_some(relative)
+}
+
 async fn favicon_asset() -> impl IntoResponse {
     (
         [("content-type", "image/svg+xml; charset=utf-8")],
@@ -626,11 +660,16 @@ fn plugin_fields_value() -> Result<Value> {
     for manifest in plugin_manifests()? {
         let mut fields = Map::new();
         for field in &manifest.custom_fields {
+            let renderer_url = field
+                .renderer
+                .as_ref()
+                .map(|renderer| asset_url(&format!("/plugin-assets/{}/{}", manifest.id, renderer)));
             fields.insert(
                 field.path.clone(),
                 json!({
                     "label": tr_plugin(&manifest, &field.label),
                     "placement": field.placement,
+                    "renderer_url": renderer_url,
                 }),
             );
         }
@@ -1670,6 +1709,34 @@ mod tests {
             value["chatwork"]["fields"]["summary"]["label"],
             Value::String("改修概要".into())
         );
+        assert!(
+            value["chatwork"]["fields"]["render_blocks"]["renderer_url"]
+                .as_str()
+                .expect("renderer url")
+                .contains("/plugin-assets/chatwork/renderers/chatwork-render-blocks.js")
+        );
+    }
+
+    #[tokio::test]
+    async fn plugin_asset_route_serves_renderer_module() {
+        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/plugin-assets/chatwork/renderers/chatwork-render-blocks.js")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        assert!(text.contains("export function render(value, context)"));
     }
 
     #[tokio::test]

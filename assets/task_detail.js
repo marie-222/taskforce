@@ -8,6 +8,7 @@ const labels = config.labels ?? {};
 const messages = config.messages ?? {};
 const statusLabels = config.status_labels ?? {};
 let pluginFields = {};
+const rendererModules = new Map();
 
 const taskId = window.location.pathname.split("/").pop();
 
@@ -137,6 +138,10 @@ function pluginFieldEntries(pluginKey) {
   return Object.entries(pluginManifest(pluginKey)?.fields ?? {});
 }
 
+function pluginFieldRendererUrl(path) {
+  return pluginFieldMeta(path)?.renderer_url ?? null;
+}
+
 function fieldPlacement(pluginKey, fieldKey) {
   return pluginManifest(pluginKey)?.fields?.[fieldKey]?.placement ?? "hidden";
 }
@@ -155,6 +160,37 @@ function hasFieldDescendants(pluginKey, fieldKey, placements) {
 
 function labelFor(path, fallbackKey) {
   return pluginFieldMeta(path)?.label ?? fallbackKey;
+}
+
+async function loadRendererModule(url) {
+  if (!url) {
+    return null;
+  }
+
+  if (!rendererModules.has(url)) {
+    rendererModules.set(
+      url,
+      import(url).catch((error) => {
+        console.error(`failed to load plugin renderer: ${url}`, error);
+        return null;
+      })
+    );
+  }
+
+  return rendererModules.get(url);
+}
+
+async function preloadPluginRenderers() {
+  const urls = new Set();
+  for (const manifest of Object.values(pluginFields)) {
+    for (const field of Object.values(manifest?.fields ?? {})) {
+      if (field?.renderer_url) {
+        urls.add(field.renderer_url);
+      }
+    }
+  }
+
+  await Promise.all([...urls].map((url) => loadRendererModule(url)));
 }
 
 function isObject(value) {
@@ -411,7 +447,56 @@ function wireExtraViewToggle(treeButton, rawButton, expandAllButton, collapseAll
   setMode("tree");
 }
 
-function renderPluginExtraSection(pluginKey, pluginValue) {
+async function renderFieldValueNode(pluginKey, path, key, value, task) {
+  const rendererUrl = pluginFieldRendererUrl(path);
+  if (!rendererUrl) {
+    return renderJsonTree(path, key, value);
+  }
+
+  const rendererModule = await loadRendererModule(rendererUrl);
+  if (typeof rendererModule?.render !== "function") {
+    return renderJsonTree(path, key, value);
+  }
+
+  try {
+    const rendered = await rendererModule.render(value, {
+      fieldPath: path,
+      fieldKey: key,
+      pluginId: pluginKey,
+      task,
+      message,
+      helpers: {
+        appendLinkifiedText,
+        createExternalLink,
+        isExternalUrl,
+        textOrFallback,
+      },
+    });
+    if (!(rendered instanceof Node)) {
+      return renderJsonTree(path, key, value);
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "tree-node tree-node--leaf tree-node--rendered";
+
+    const keyNode = document.createElement("div");
+    keyNode.className = "tree-key";
+    keyNode.textContent = labelFor(path, key);
+    wrapper.appendChild(keyNode);
+
+    const valueNode = document.createElement("div");
+    valueNode.className = "tree-leaf-value tree-leaf-value--rendered";
+    valueNode.appendChild(rendered);
+    wrapper.appendChild(valueNode);
+
+    return wrapper;
+  } catch (error) {
+    console.error(`failed to render plugin field ${path}`, error);
+    return renderJsonTree(path, key, value);
+  }
+}
+
+async function renderPluginExtraSection(pluginKey, pluginValue, task) {
   const section = document.createElement("div");
   section.className = "plugin-section";
 
@@ -450,12 +535,20 @@ function renderPluginExtraSection(pluginKey, pluginValue) {
     } else {
       for (const [childKey, childValue] of entries) {
         treeView.appendChild(
-          renderJsonTree(`${pluginKey}.${childKey}`, childKey, childValue)
+          await renderFieldValueNode(
+            pluginKey,
+            `${pluginKey}.${childKey}`,
+            childKey,
+            childValue,
+            task
+          )
         );
       }
     }
   } else {
-    treeView.appendChild(renderJsonTree(pluginKey, pluginKey, pluginValue));
+    treeView.appendChild(
+      await renderFieldValueNode(pluginKey, pluginKey, pluginKey, pluginValue, task)
+    );
   }
   content.appendChild(treeView);
 
@@ -480,7 +573,7 @@ function renderPluginExtraSection(pluginKey, pluginValue) {
   return section;
 }
 
-function renderGroupedPluginExtraSection(groupId, groupLabel, entries) {
+async function renderGroupedPluginExtraSection(groupId, groupLabel, entries, task) {
   const section = document.createElement("div");
   section.className = "plugin-section";
 
@@ -516,12 +609,20 @@ function renderGroupedPluginExtraSection(groupId, groupLabel, entries) {
       const fields = Object.entries(pluginValue);
       for (const [childKey, childValue] of fields) {
         treeView.appendChild(
-          renderJsonTree(`${pluginKey}.${childKey}`, childKey, childValue)
+          await renderFieldValueNode(
+            pluginKey,
+            `${pluginKey}.${childKey}`,
+            childKey,
+            childValue,
+            task
+          )
         );
         renderedAny = true;
       }
     } else {
-      treeView.appendChild(renderJsonTree(pluginKey, pluginKey, pluginValue));
+      treeView.appendChild(
+        await renderFieldValueNode(pluginKey, pluginKey, pluginKey, pluginValue, task)
+      );
       renderedAny = true;
     }
   }
@@ -555,11 +656,11 @@ function renderGroupedPluginExtraSection(groupId, groupLabel, entries) {
   return section;
 }
 
-function renderPluginExtraSections(
+async function renderPluginExtraSections(
   container,
   extra,
   placements = new Set(["right"]),
-  { showEmpty = true } = {}
+  { showEmpty = true, task = null } = {}
 ) {
   const namespaces = Object.entries(normalizePluginExtra(extra, placements));
 
@@ -578,7 +679,7 @@ function renderPluginExtraSections(
   for (const [pluginKey, pluginValue] of namespaces) {
     const group = pluginGroupMeta(pluginKey);
     if (!group) {
-      container.appendChild(renderPluginExtraSection(pluginKey, pluginValue));
+      container.appendChild(await renderPluginExtraSection(pluginKey, pluginValue, task));
       continue;
     }
 
@@ -593,10 +694,11 @@ function renderPluginExtraSections(
 
   for (const [groupId, groupValue] of grouped.entries()) {
     container.appendChild(
-      renderGroupedPluginExtraSection(
+      await renderGroupedPluginExtraSection(
         groupId,
         groupValue.label,
-        groupValue.entries
+        groupValue.entries,
+        task
       )
     );
   }
@@ -621,6 +723,7 @@ async function loadTask() {
   }
 
   pluginFields = pluginResponse.ok ? await pluginResponse.json() : {};
+  await preloadPluginRenderers();
 
   const task = await taskResponse.json();
   const metaLine = document.getElementById("meta-line");
@@ -647,16 +750,16 @@ async function loadTask() {
   }
   pluginLeftSections.innerHTML = "";
   pluginLeftSection.hidden =
-    renderPluginExtraSections(
+    await renderPluginExtraSections(
       pluginLeftSections,
       task.extra,
       new Set(["left"]),
-      { showEmpty: false }
+      { showEmpty: false, task }
     ) === 0;
   projectRow.hidden = !task.core.project;
   document.getElementById("project-value").textContent = task.core.project ?? "";
   pluginExtraSections.innerHTML = "";
-  renderPluginExtraSections(pluginExtraSections, task.extra);
+  await renderPluginExtraSections(pluginExtraSections, task.extra, new Set(["right"]), { task });
 
   metaLine.innerHTML = "";
   for (const chipText of [

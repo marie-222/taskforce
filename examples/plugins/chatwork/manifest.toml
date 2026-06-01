@@ -69,6 +69,7 @@ placement = "hidden"
 path = "render_blocks"
 label = "Original Request"
 placement = "left"
+renderer = "renderers/chatwork-render-blocks.js"
 
 [[custom_fields]]
 path = "source"
