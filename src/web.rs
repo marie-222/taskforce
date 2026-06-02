@@ -1773,7 +1773,7 @@ mod tests {
             "if (pluginValue && typeof pluginValue === \"object\" && !Array.isArray(pluginValue))"
         ));
         assert!(text.contains("const entries = Object.entries(pluginValue);"));
-        assert!(text.contains("renderJsonTree(`${pluginKey}.${childKey}`, childKey, childValue)"));
+        assert!(text.contains("renderJsonTree(`${path}.${childKey}`, childKey, childValue)"));
     }
 
     #[tokio::test]
@@ -1907,7 +1907,7 @@ mod tests {
             "const pluginLeftSections = document.getElementById(\"plugin-left-sections\");"
         ));
         assert!(text.contains("renderPluginExtraSections("));
-        assert!(text.contains("{ showEmpty: false }"));
+        assert!(text.contains("{ showEmpty: false, task }"));
     }
 
     #[tokio::test]
