@@ -180,7 +180,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             None => println!("no open tasks"),
         },
         Commands::Serve => {
-            crate::web::serve(client, config.server.resolve()?).await?;
+            crate::web::serve(client, config.server.resolve()?, config.list.clone()).await?;
         }
     }
 

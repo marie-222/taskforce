@@ -32,3 +32,6 @@ kind = "sqlite"
 [server]
 # host = "127.0.0.1"
 # port = 9090  # Optional. Omit this to let taskforce choose a free port.
+
+[list]
+# open_statuses = ["active"]  # Status group accordions that start expanded on the task list page.

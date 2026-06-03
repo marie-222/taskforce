@@ -17,22 +17,23 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::backend::{TaskBackend, TaskStatus};
+use crate::config::ListConfig;
 use crate::dto::{TaskDto, TaskListItemDto};
 use crate::i18n::tr;
 use crate::plugin::{plugin_manifests, tr_plugin};
 
-pub async fn serve<B>(backend: B, addr: SocketAddr) -> Result<()>
+pub async fn serve<B>(backend: B, addr: SocketAddr, list_config: ListConfig) -> Result<()>
 where
     B: TaskBackend + Clone + Send + Sync + 'static,
 {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let local_addr = listener.local_addr()?;
     println!("serving taskforce at http://{local_addr}");
-    axum::serve(listener, app_router(backend)).await?;
+    axum::serve(listener, app_router(backend, list_config)).await?;
     Ok(())
 }
 
-pub fn app_router<B>(backend: B) -> Router
+pub fn app_router<B>(backend: B, list_config: ListConfig) -> Router
 where
     B: TaskBackend + Clone + Send + Sync + 'static,
 {
@@ -58,14 +59,15 @@ where
         .route("/status/{status}", get(status_tasks))
         .route("/tasks/{id}", get(task_detail))
         .with_state(backend)
+        .layer(axum::Extension(list_config))
 }
 
-async fn index() -> Html<String> {
-    Html(render_index_html())
+async fn index(axum::Extension(list_config): axum::Extension<ListConfig>) -> Html<String> {
+    Html(render_index_html(&list_config))
 }
 
-async fn all_tasks() -> Html<String> {
-    Html(render_all_tasks_html())
+async fn all_tasks(axum::Extension(list_config): axum::Extension<ListConfig>) -> Html<String> {
+    Html(render_all_tasks_html(&list_config))
 }
 
 async fn api_tasks<B>(
@@ -391,7 +393,12 @@ fn map_task_error_status(error: anyhow::Error) -> StatusCode {
     }
 }
 
-fn render_index_html() -> String {
+fn render_index_html(list_config: &ListConfig) -> String {
+    let open_statuses: Vec<&str> = list_config
+        .open_statuses
+        .iter()
+        .map(String::as_str)
+        .collect();
     render_index_page(
         "/",
         "taskforce".to_string(),
@@ -399,11 +406,16 @@ fn render_index_html() -> String {
         "/api/tasks",
         tr("No open tasks."),
         &["active", "unstarted", "waiting", "suspended"],
-        &["active"],
+        &open_statuses,
     )
 }
 
-fn render_all_tasks_html() -> String {
+fn render_all_tasks_html(list_config: &ListConfig) -> String {
+    let open_statuses: Vec<&str> = list_config
+        .open_statuses
+        .iter()
+        .map(String::as_str)
+        .collect();
     render_index_page(
         "/",
         tr("Back to Open Tasks"),
@@ -420,7 +432,7 @@ fn render_all_tasks_html() -> String {
             "mistaken",
             "duplicated",
         ],
-        &["active"],
+        &open_statuses,
     )
 }
 
@@ -1167,7 +1179,7 @@ mod tests {
                 ]),
             }],
         };
-        let app = crate::web::app_router(backend);
+        let app = crate::web::app_router(backend, crate::config::ListConfig::default());
 
         let response = app
             .oneshot(
@@ -1231,9 +1243,12 @@ mod tests {
             annotations: Vec::new(),
             extra: Map::new(),
         };
-        let app = crate::web::app_router(MockBackend {
-            tasks: vec![first, second],
-        });
+        let app = crate::web::app_router(
+            MockBackend {
+                tasks: vec![first, second],
+            },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1298,9 +1313,12 @@ mod tests {
             annotations: Vec::new(),
             extra: Map::new(),
         };
-        let app = crate::web::app_router(MockBackend {
-            tasks: vec![first, second],
-        });
+        let app = crate::web::app_router(
+            MockBackend {
+                tasks: vec![first, second],
+            },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .clone()
@@ -1340,7 +1358,10 @@ mod tests {
 
     #[tokio::test]
     async fn index_page_renders_taskforce_heading() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1366,7 +1387,10 @@ mod tests {
 
     #[tokio::test]
     async fn tag_page_renders_tag_heading_and_backlink() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1390,7 +1414,10 @@ mod tests {
 
     #[tokio::test]
     async fn all_tasks_page_renders_backlink_and_all_tasks_api() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1414,7 +1441,10 @@ mod tests {
 
     #[tokio::test]
     async fn status_page_renders_backlink_and_status_api() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1437,7 +1467,10 @@ mod tests {
 
     #[tokio::test]
     async fn search_page_renders_search_form_and_api() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1485,7 +1518,7 @@ mod tests {
                 extra: Map::new(),
             }],
         };
-        let app = crate::web::app_router(backend);
+        let app = crate::web::app_router(backend, crate::config::ListConfig::default());
 
         let response = app
             .oneshot(
@@ -1507,7 +1540,10 @@ mod tests {
 
     #[tokio::test]
     async fn index_page_assets_include_status_and_schedule_metadata() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1567,7 +1603,7 @@ mod tests {
                 )]),
             }],
         };
-        let app = crate::web::app_router(backend);
+        let app = crate::web::app_router(backend, crate::config::ListConfig::default());
 
         let api_response = app
             .clone()
@@ -1609,7 +1645,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_uses_only_core_description_for_description_section() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1634,7 +1673,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_hides_description_section_without_effective_description() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1660,7 +1702,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_styles_hide_hidden_sections() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1684,7 +1729,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_uses_plugin_sections_for_extra_data() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1711,7 +1759,10 @@ mod tests {
 
     #[tokio::test]
     async fn plugin_manifests_api_returns_translated_field_metadata() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1751,7 +1802,10 @@ mod tests {
 
     #[tokio::test]
     async fn plugin_asset_route_serves_renderer_module() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1773,7 +1827,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_filters_plugin_fields_by_manifest_placement() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1809,7 +1866,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_renders_plugin_sections_as_accordions() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1835,7 +1895,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_ignores_plugins_without_manifests() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1863,7 +1926,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_renders_left_and_right_plugin_sections_generically() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1890,7 +1956,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_links_external_urls_in_metadata_and_request_body() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1916,7 +1985,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_renders_generic_left_plugin_sections() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(
@@ -1943,7 +2015,10 @@ mod tests {
 
     #[tokio::test]
     async fn detail_page_hides_missing_core_rows() {
-        let app = crate::web::app_router(MockBackend { tasks: Vec::new() });
+        let app = crate::web::app_router(
+            MockBackend { tasks: Vec::new() },
+            crate::config::ListConfig::default(),
+        );
 
         let response = app
             .oneshot(

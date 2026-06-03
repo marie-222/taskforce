@@ -19,6 +19,31 @@ pub struct AppConfig {
     pub backend: BackendConfig,
     #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)]
+    pub list: ListConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListConfig {
+    #[serde(default = "default_open_statuses")]
+    pub open_statuses: Vec<String>,
+}
+
+impl Default for ListConfig {
+    fn default() -> Self {
+        Self {
+            open_statuses: default_open_statuses(),
+        }
+    }
+}
+
+fn default_open_statuses() -> Vec<String> {
+    vec!["active".to_string()]
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct FileListConfig {
+    pub open_statuses: Option<Vec<String>>,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -27,6 +52,7 @@ struct FileAppConfig {
     pub profiles: Option<ProfilesConfig>,
     pub backend: Option<FileBackendConfig>,
     pub server: Option<FileServerConfig>,
+    pub list: Option<FileListConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -194,6 +220,12 @@ impl AppConfig {
                 self.server.port = server.port;
             }
         }
+
+        if let Some(list) = other.list
+            && let Some(open_statuses) = list.open_statuses
+        {
+            self.list.open_statuses = open_statuses;
+        }
     }
 }
 
@@ -204,6 +236,7 @@ impl fmt::Debug for AppConfig {
             .field("sqlite_path", &self.sqlite_path)
             .field("backend", &self.backend)
             .field("server", &self.server)
+            .field("list", &self.list)
             .finish()
     }
 }
@@ -730,6 +763,7 @@ mod tests {
                 postgres_ssl_root_cert: Some(PathBuf::from("/tmp/supabase-prod-ca-2021.crt")),
             },
             server: ServerConfig::default(),
+            list: super::ListConfig::default(),
         };
 
         let debug = format!("{config:?}");
